@@ -1,9 +1,14 @@
 #!/usr/bin/env node
-import { writeFileSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Command } from "commander";
 import { render } from "ink";
+
+// Load a local .env (if present) before resolving any model/keys. Native to Node ≥20.6.
+for (const envPath of [path.join(process.cwd(), ".env")]) {
+  if (existsSync(envPath)) process.loadEnvFile(envPath);
+}
 import type { ApprovalPolicy } from "./core/approval.js";
 import { openAuditLog } from "./core/audit.js";
 import { openCheckpointer } from "./core/checkpointer.js";
