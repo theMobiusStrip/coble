@@ -16,6 +16,8 @@ export interface ScriptToolCall {
 export interface ScriptTurn {
   content?: string;
   toolCalls?: ScriptToolCall[];
+  /** If set, the model throws with this message instead of replying — simulates a crash mid-run. */
+  crash?: string;
 }
 
 /**
@@ -43,6 +45,7 @@ export class ScriptedChatModel extends BaseChatModel {
   async _generate(_messages: BaseMessage[]): Promise<ChatResult> {
     const turn = this.turns[this.cursor] ?? { content: "script exhausted — stopping." };
     this.cursor += 1;
+    if (turn.crash) throw new Error(turn.crash);
     const content = turn.content ?? "";
     const message = new AIMessage({
       content,
@@ -71,6 +74,7 @@ export class ScriptedChatModel extends BaseChatModel {
   ): AsyncGenerator<ChatGenerationChunk> {
     const turn = this.turns[this.cursor] ?? { content: "script exhausted — stopping." };
     this.cursor += 1;
+    if (turn.crash) throw new Error(turn.crash);
     const content = turn.content ?? "";
     const message = new AIMessageChunk({
       content,

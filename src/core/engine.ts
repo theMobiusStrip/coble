@@ -10,12 +10,15 @@ import { AsyncQueue } from "./queue.js";
 import { makeCoreTools } from "./tools/index.js";
 
 export interface EngineOptions {
-  prompt: string;
+  /** Task text for a fresh run. Ignored when `resume` is true. */
+  prompt?: string;
   cwd: string;
   model: BaseChatModel;
   policy?: ApprovalPolicy;
   checkpointer?: BaseCheckpointSaver;
   threadId?: string;
+  /** Continue an existing thread from its last checkpoint instead of starting fresh. */
+  resume?: boolean;
   systemExtra?: string;
   maxSteps?: number;
   audit?: (entry: AuditEntry) => void;
@@ -49,9 +52,13 @@ export function runAgent(opts: EngineOptions): AsyncIterable<AgentEvent> {
     signal: opts.signal,
   };
 
+  // Fresh run starts from a new human message; resume passes null so LangGraph
+  // continues the thread's pending work from the last checkpoint.
+  const input = opts.resume ? null : { messages: [new HumanMessage(opts.prompt ?? "")] };
+
   void (async () => {
     try {
-      const finalState = await app.invoke({ messages: [new HumanMessage(opts.prompt)] }, config);
+      const finalState = await app.invoke(input, config);
       const last = finalState.messages.at(-1);
       const text =
         last !== undefined && isAIMessage(last) && typeof last.content === "string" ? last.content : "";
@@ -63,7 +70,11 @@ export function runAgent(opts: EngineOptions): AsyncIterable<AgentEvent> {
       });
       queue.close();
     } catch (err) {
-      queue.push({ type: "error", message: err instanceof Error ? err.message : String(err) });
+      if (opts.signal?.aborted) {
+        queue.push({ type: "interrupted", calls: [] });
+      } else {
+        queue.push({ type: "error", message: err instanceof Error ? err.message : String(err) });
+      }
       queue.close();
     }
   })();
