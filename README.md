@@ -7,7 +7,7 @@ A **local, provider-agnostic agent CLI** built on LangGraph.js and Ink.
 - **Provider-agnostic** — one flag switches OpenAI / Anthropic / local Ollama
 - **Built-in evals** — fixture-based task suite with assertion scoring, runs in CI
 
-> Status: under construction. See [PLAN.md](./PLAN.md) for the milestone plan.
+> Status: under construction.
 
 ## Development
 
