@@ -1,0 +1,10 @@
+id: 13-no-tools
+description: A pure question is answered without any tool calls
+prompt: What does the acronym CLI stand for? Answer in one sentence.
+script:
+  - content: CLI stands for command-line interface.
+assert:
+  - final_contains: command-line interface
+  - tool_not_called: bash
+  - tool_not_called: write_file
+  - max_steps: 0

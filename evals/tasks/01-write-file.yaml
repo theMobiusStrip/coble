@@ -1,0 +1,14 @@
+id: 01-write-file
+description: Create a new file with given content
+prompt: Create a file greeting.txt containing exactly "hello world".
+script:
+  - content: Creating the file.
+    toolCalls:
+      - name: write_file
+        args: { path: greeting.txt, content: "hello world\n" }
+  - content: Created greeting.txt.
+assert:
+  - file_exists: greeting.txt
+  - file_contains: { path: greeting.txt, text: hello world }
+  - tool_called: write_file
+  - final_contains: greeting.txt

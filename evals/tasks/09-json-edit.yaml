@@ -1,0 +1,18 @@
+id: 09-json-edit
+description: Modify a value inside a JSON file
+prompt: In package.json, change the version to 1.2.3.
+fixture:
+  files:
+    package.json: |
+      {
+        "name": "demo",
+        "version": "0.0.1"
+      }
+script:
+  - toolCalls:
+      - name: edit_file
+        args: { path: package.json, old_string: "\"0.0.1\"", new_string: "\"1.2.3\"" }
+  - content: Updated the version to 1.2.3.
+assert:
+  - file_contains: { path: package.json, text: "1.2.3" }
+  - file_regex: { path: package.json, pattern: "\"version\": \"1\\.2\\.3\"" }

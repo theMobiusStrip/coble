@@ -1,0 +1,31 @@
+id: 15-audit-report
+description: Produce an AUDIT.md report from inspecting the repo
+prompt: Audit this project and write your findings to AUDIT.md.
+fixture:
+  files:
+    package.json: |
+      { "name": "demo", "dependencies": { "leftpad": "0.0.1" } }
+    index.js: "// TODO: tests\nmodule.exports = 1;\n"
+script:
+  - toolCalls:
+      - name: read_file
+        args: { path: package.json }
+  - toolCalls:
+      - name: bash
+        args: { command: "grep -rn TODO . --include=*.js" }
+  - toolCalls:
+      - name: write_file
+        args:
+          path: AUDIT.md
+          content: |
+            # Audit
+            ## Findings
+            - High: leftpad@0.0.1 is risky (package.json)
+            - Medium: index.js has a TODO and no tests
+  - content: Wrote AUDIT.md with two findings.
+assert:
+  - file_exists: AUDIT.md
+  - file_contains: { path: AUDIT.md, text: Findings }
+  - file_regex: { path: AUDIT.md, pattern: "leftpad" }
+  - tool_called: read_file
+  - tool_called: write_file

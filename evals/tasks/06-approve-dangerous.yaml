@@ -1,0 +1,13 @@
+id: 06-approve-dangerous
+description: An approved dangerous command runs
+prompt: Create a directory called build.
+approve: all
+script:
+  - toolCalls:
+      - name: bash
+        args: { command: "mkdir build" }
+  - content: Created the build directory.
+assert:
+  - tool_called: bash
+  - audit_decision: { tool: bash, decision: approved }
+  - file_exists: build

@@ -1,0 +1,16 @@
+id: 08-write-verify
+description: Write a file then verify it by reading back
+prompt: Write the number 42 to answer.txt and confirm it is there.
+script:
+  - toolCalls:
+      - name: write_file
+        args: { path: answer.txt, content: "42\n" }
+  - toolCalls:
+      - name: bash
+        args: { command: "cat answer.txt" }
+  - content: Confirmed — answer.txt contains 42.
+assert:
+  - file_contains: { path: answer.txt, text: "42" }
+  - tool_called: write_file
+  - tool_called: bash
+  - final_contains: "42"

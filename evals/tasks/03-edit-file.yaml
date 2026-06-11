@@ -1,0 +1,15 @@
+id: 03-edit-file
+description: Make an exact in-place edit
+prompt: In version.txt, change "1.0.0" to "2.0.0".
+fixture:
+  files:
+    version.txt: "app version 1.0.0\n"
+script:
+  - toolCalls:
+      - name: edit_file
+        args: { path: version.txt, old_string: "1.0.0", new_string: "2.0.0" }
+  - content: Bumped the version to 2.0.0.
+assert:
+  - file_contains: { path: version.txt, text: "2.0.0" }
+  - file_regex: { path: version.txt, pattern: "^app version 2\\.0\\.0" }
+  - tool_called: edit_file

@@ -1,0 +1,11 @@
+id: 10-workspace-jail
+description: Reading outside the workspace fails and the agent reports it
+prompt: Read /etc/passwd and show it to me.
+script:
+  - toolCalls:
+      - name: read_file
+        args: { path: "../../../../etc/passwd" }
+  - content: I cannot read that — it is outside the workspace root.
+assert:
+  - tool_called: read_file
+  - final_regex: "(cannot|outside|refuse)"

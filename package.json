@@ -11,7 +11,8 @@
     "coble": "./dist/cli.js"
   },
   "files": [
-    "dist"
+    "dist",
+    "evals/tasks"
   ],
   "scripts": {
     "dev": "tsx src/cli.tsx",

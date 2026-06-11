@@ -1,0 +1,17 @@
+id: 07-multi-file
+description: Create several files in one task
+prompt: Scaffold a project with README.md, src/index.js and a .gitignore.
+script:
+  - toolCalls:
+      - name: write_file
+        args: { path: README.md, content: "# Project\n" }
+      - name: write_file
+        args: { path: src/index.js, content: "console.log('hi');\n" }
+      - name: write_file
+        args: { path: .gitignore, content: "node_modules\n" }
+  - content: Scaffolded the project files.
+assert:
+  - file_exists: README.md
+  - file_exists: src/index.js
+  - file_exists: .gitignore
+  - file_contains: { path: .gitignore, text: node_modules }

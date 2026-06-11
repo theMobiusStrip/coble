@@ -1,5 +1,7 @@
 #!/usr/bin/env node
+import { writeFileSync } from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { Command } from "commander";
 import { render } from "ink";
 import type { ApprovalPolicy } from "./core/approval.js";
@@ -13,11 +15,16 @@ import { observeSession } from "./core/sessionRunner.js";
 import { openSessionStore } from "./core/sessions.js";
 import { auditLogPath } from "./core/store.js";
 import { makeGitTools } from "./core/tools/gitTools.js";
+import { loadTasks } from "./eval/load.js";
+import { renderConsole, renderMarkdown } from "./eval/report.js";
+import { runAll, scriptedModelFor, type ModelForTask } from "./eval/run.js";
 import { runHeadless } from "./headless.js";
 import { renderPrint } from "./print.js";
 import { formatSessionsTable } from "./sessionsView.js";
 import { App } from "./ui/App.js";
 import { VERSION } from "./version.js";
+
+const TASKS_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../evals/tasks");
 
 function policyFrom(opts: { dangerouslyAllow?: boolean; paranoid?: boolean }): ApprovalPolicy {
   return {
@@ -99,6 +106,41 @@ program
       extraTools: gitTools,
       systemExtra: REVIEW_PROMPT,
     });
+  });
+
+program
+  .command("eval")
+  .description("run the eval suite (scripted by default; --model for a real model)")
+  .option("-m, --model <spec>", "run against a real model instead of the scripted fixtures")
+  .option("-f, --filter <substr>", "only run tasks whose id includes this substring")
+  .option("--write", "write evals/RESULTS.md")
+  .option("--tasks <dir>", "tasks directory", TASKS_DIR)
+  .action(async (opts: { model?: string; filter?: string; write?: boolean; tasks: string }) => {
+    let tasks = loadTasks(opts.tasks);
+    if (opts.filter) tasks = tasks.filter((t) => t.id.includes(opts.filter!));
+    if (tasks.length === 0) {
+      program.error("no tasks matched");
+      return;
+    }
+
+    let modelFor: ModelForTask = scriptedModelFor;
+    let label = "scripted";
+    if (opts.model) {
+      const resolved = await resolveModel(opts.model);
+      label = resolved.label;
+      modelFor = () => ({ model: resolved.model, label: resolved.label });
+    }
+
+    const results = await runAll(tasks, modelFor, Date.now());
+    const { passed, total } = renderConsole(results, label);
+
+    if (opts.write) {
+      const md = renderMarkdown(results, { model: label, dateIso: new Date().toISOString().slice(0, 10) });
+      const out = path.resolve(opts.tasks, "..", "RESULTS.md");
+      writeFileSync(out, md, "utf8");
+      console.log(`\nwrote ${path.relative(process.cwd(), out)}`);
+    }
+    process.exitCode = passed === total ? 0 : 1;
   });
 
 program

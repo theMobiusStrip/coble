@@ -1,0 +1,17 @@
+id: 11-edit-ambiguous
+description: Ambiguous edit recovers via replace_all
+prompt: Rename every "foo" to "bar" in names.txt.
+fixture:
+  files:
+    names.txt: "foo foo foo\n"
+script:
+  - toolCalls:
+      - name: edit_file
+        args: { path: names.txt, old_string: "foo", new_string: "bar" }
+  - toolCalls:
+      - name: edit_file
+        args: { path: names.txt, old_string: "foo", new_string: "bar", replace_all: true }
+  - content: Replaced all occurrences of foo with bar.
+assert:
+  - file_regex: { path: names.txt, pattern: "^bar bar bar" }
+  - file_absent: nonexistent.txt

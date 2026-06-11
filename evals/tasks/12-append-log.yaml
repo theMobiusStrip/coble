@@ -1,0 +1,18 @@
+id: 12-append-log
+description: Read, transform, and write a derived file
+prompt: Create UPPER.txt containing the uppercase of the word in word.txt.
+fixture:
+  files:
+    word.txt: "hello\n"
+script:
+  - toolCalls:
+      - name: read_file
+        args: { path: word.txt }
+  - toolCalls:
+      - name: write_file
+        args: { path: UPPER.txt, content: "HELLO\n" }
+  - content: Wrote the uppercase word.
+assert:
+  - file_contains: { path: UPPER.txt, text: HELLO }
+  - tool_called: read_file
+  - tool_called: write_file

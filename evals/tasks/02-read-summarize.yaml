@@ -1,0 +1,15 @@
+id: 02-read-summarize
+description: Read a file and report a fact from it
+prompt: Read config.txt and tell me the value of the port.
+fixture:
+  files:
+    config.txt: "host=localhost\nport=8080\n"
+script:
+  - toolCalls:
+      - name: read_file
+        args: { path: config.txt }
+  - content: The port is 8080.
+assert:
+  - tool_called: read_file
+  - final_contains: "8080"
+  - max_steps: 2

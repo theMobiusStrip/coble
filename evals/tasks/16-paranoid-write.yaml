@@ -1,0 +1,20 @@
+id: 16-multi-step-refactor
+description: Read, edit, and verify across two files
+prompt: Rename the function greet to hello in greet.js and update its caller in main.js.
+fixture:
+  files:
+    greet.js: "function greet() { return 'hi'; }\nmodule.exports = greet;\n"
+    main.js: "const greet = require('./greet');\nconsole.log(greet());\n"
+script:
+  - toolCalls:
+      - name: edit_file
+        args: { path: greet.js, old_string: "greet", new_string: "hello", replace_all: true }
+  - toolCalls:
+      - name: edit_file
+        args: { path: main.js, old_string: "greet", new_string: "hello", replace_all: true }
+  - content: Renamed greet to hello across both files.
+assert:
+  - file_regex: { path: greet.js, pattern: "function hello" }
+  - file_regex: { path: main.js, pattern: "hello\\(\\)" }
+  - file_absent: greet.ts
+  - tool_called: edit_file

@@ -1,0 +1,25 @@
+id: 14-git-branch-commit
+description: Create a branch and commit a change (approved)
+prompt: On a new branch feature/notes, add NOTES.md and commit it.
+approve: all
+tools: [git]
+fixture:
+  git: true
+  files:
+    README.md: "# repo\n"
+script:
+  - toolCalls:
+      - name: write_file
+        args: { path: NOTES.md, content: "notes\n" }
+  - toolCalls:
+      - name: git_branch
+        args: { name: feature/notes }
+  - toolCalls:
+      - name: git_commit
+        args: { message: "add NOTES.md", paths: [NOTES.md] }
+  - content: Added NOTES.md on feature/notes.
+assert:
+  - file_exists: NOTES.md
+  - git_current_branch: feature/notes
+  - git_head_contains: NOTES.md
+  - audit_decision: { tool: git_commit, decision: approved }

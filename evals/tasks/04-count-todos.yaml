@@ -1,0 +1,16 @@
+id: 04-count-todos
+description: Use a read-only shell command to count matches
+prompt: How many TODO comments are in the src directory?
+fixture:
+  files:
+    src/a.js: "// TODO: one\nconst a = 1;\n"
+    src/b.js: "// TODO: two\n// TODO: three\n"
+script:
+  - toolCalls:
+      - name: bash
+        args: { command: "grep -rn TODO src | wc -l" }
+  - content: There are 3 TODO comments.
+assert:
+  - tool_called: bash
+  - audit_decision: { tool: bash, decision: auto }
+  - final_contains: "3"
