@@ -13,6 +13,7 @@ import {
   MessagesAnnotation,
   START,
   StateGraph,
+  interrupt,
   type BaseCheckpointSaver,
   type LangGraphRunnableConfig,
 } from "@langchain/langgraph";
@@ -22,7 +23,7 @@ import {
   tierExceeds,
   type ApprovalPolicy,
 } from "./approval.js";
-import type { AgentEvent } from "./events.js";
+import type { AgentEvent, PendingCall } from "./events.js";
 import { systemPrompt } from "./prompts.js";
 import { capOutput } from "./tools/bash.js";
 
@@ -42,6 +43,17 @@ export interface AuditEntry {
   detail?: string;
 }
 
+/** Payload carried by interrupt() to the approval handler. */
+export interface ApprovalRequest {
+  calls: PendingCall[];
+}
+
+/** Resume value supplied back through Command({ resume }). */
+export interface ApprovalResponse {
+  /** Per-call-id approval decisions. Missing id ⇒ denied. */
+  decisions: Record<string, boolean>;
+}
+
 export interface GraphDeps {
   model: BaseChatModel;
   tools: StructuredToolInterface[];
@@ -50,6 +62,9 @@ export interface GraphDeps {
   emit: (event: AgentEvent) => void;
   audit?: (entry: AuditEntry) => void;
   checkpointer?: BaseCheckpointSaver;
+  /** When true, calls exceeding policy pause via interrupt() for human approval.
+   *  When false, they are denied inline (headless default). */
+  interactive?: boolean;
   systemExtra?: string;
   maxSteps?: number;
 }
@@ -92,27 +107,58 @@ export function buildGraph(deps: GraphDeps) {
   const toolsNode = async (state: AgentStateT, config: LangGraphRunnableConfig) => {
     const last = state.messages.at(-1);
     if (last === undefined || !isAIMessage(last)) return { messages: [] };
-    const results: ToolMessage[] = [];
-    for (const call of last.tool_calls ?? []) {
-      const callId = call.id ?? `call_${results.length}`;
-      const tier = classifyToolCall(call.name, call.args);
-      const summary = summarizeCall(call.name, call.args);
 
-      if (tierExceeds(tier, policy)) {
-        const reason = `"${tier}"-tier call requires user approval`;
+    const calls = (last.tool_calls ?? []).map((call, i) => ({
+      call,
+      callId: call.id ?? `call_${i}`,
+      tier: classifyToolCall(call.name, call.args),
+      summary: summarizeCall(call.name, call.args),
+    }));
+
+    // Phase 1 — approvals. Anything exceeding policy needs a decision. In
+    // interactive mode we pause the whole graph via interrupt() BEFORE running
+    // any tool (the node re-executes from the top on resume, so no side effect
+    // may precede the interrupt). Headless runs deny such calls outright.
+    const needApproval = calls.filter((c) => tierExceeds(c.tier, policy));
+    const decisions: Record<string, boolean> = {};
+    if (needApproval.length > 0) {
+      if (deps.interactive) {
+        const request: ApprovalRequest = {
+          calls: needApproval.map<PendingCall>((c) => ({
+            id: c.callId,
+            name: c.call.name,
+            summary: c.summary,
+            tier: c.tier,
+          })),
+        };
+        const response = interrupt(request) as ApprovalResponse | undefined;
+        for (const c of needApproval) decisions[c.callId] = response?.decisions?.[c.callId] === true;
+      } else {
+        for (const c of needApproval) decisions[c.callId] = false;
+      }
+    }
+
+    // Phase 2 — execute (runs once, post-approval).
+    const results: ToolMessage[] = [];
+    for (const { call, callId, tier, summary } of calls) {
+      if (tierExceeds(tier, policy) && decisions[callId] !== true) {
+        const reason = deps.interactive
+          ? "user denied approval"
+          : `"${tier}"-tier call requires user approval`;
         emit({ type: "tool_denied", name: call.name, input: summary, reason });
         audit?.({ ts: new Date().toISOString(), tool: call.name, summary, tier, decision: "denied" });
         results.push(
           new ToolMessage({
             tool_call_id: callId,
             name: call.name,
-            content: `DENIED: this ${tier}-tier call requires user approval and was not executed. Do not retry the identical call; adapt your approach or finish with an explanation.`,
+            content: `DENIED (${reason}): this ${tier}-tier call was not executed. Do not retry the identical call; adapt your approach or finish with an explanation.`,
             status: "error",
           }),
         );
         continue;
       }
 
+      const approvedDangerous = tierExceeds(tier, policy) && decisions[callId] === true;
       const t = toolMap.get(call.name);
       if (t === undefined) {
         results.push(
@@ -132,7 +178,13 @@ export function buildGraph(deps: GraphDeps) {
         const raw: unknown = await t.invoke(call.args as never, config);
         const text = typeof raw === "string" ? raw : JSON.stringify(raw);
         emit({ type: "tool_end", name: call.name, ok: true, output: text, ms: Date.now() - startedAt });
-        audit?.({ ts: new Date().toISOString(), tool: call.name, summary, tier, decision: "auto" });
+        audit?.({
+          ts: new Date().toISOString(),
+          tool: call.name,
+          summary,
+          tier,
+          decision: approvedDangerous ? "approved" : "auto",
+        });
         results.push(new ToolMessage({ tool_call_id: callId, name: call.name, content: capOutput(text) }));
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);

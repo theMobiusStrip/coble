@@ -3,12 +3,14 @@ import path from "node:path";
 import { Command } from "commander";
 import { render } from "ink";
 import type { ApprovalPolicy } from "./core/approval.js";
+import { openAuditLog } from "./core/audit.js";
 import { openCheckpointer } from "./core/checkpointer.js";
 import { formatUsage } from "./core/cost.js";
 import { runAgent } from "./core/engine.js";
 import { resolveModel } from "./core/models.js";
 import { observeSession } from "./core/sessionRunner.js";
 import { openSessionStore } from "./core/sessions.js";
+import { auditLogPath } from "./core/store.js";
 import { renderPrint } from "./print.js";
 import { formatSessionsTable } from "./sessionsView.js";
 import { App } from "./ui/App.js";
@@ -50,9 +52,10 @@ program
       if (prompt.length === 0) program.error('print mode needs a prompt: coble -p "do something"');
       const { model, label } = await resolveModel(opts.model);
       const store = openSessionStore();
+      const audit = openAuditLog(auditLogPath());
       const session = store.create({ cwd, model: label, prompt, nowIso: new Date().toISOString() });
       const events = observeSession(
-        runAgent({ prompt, cwd, model, policy, checkpointer: openCheckpointer(), threadId: session.id }),
+        runAgent({ prompt, cwd, model, policy, checkpointer: openCheckpointer(), threadId: session.id, audit: audit.record }),
         store,
         session.id,
       );
@@ -75,6 +78,22 @@ program
   });
 
 program
+  .command("audit")
+  .description("show the tool-call audit log")
+  .option("-n, --tail <count>", "show only the last N entries", (v) => Number.parseInt(v, 10))
+  .action((opts: { tail?: number }) => {
+    const entries = openAuditLog(auditLogPath()).entries();
+    const shown = opts.tail ? entries.slice(-opts.tail) : entries;
+    if (shown.length === 0) {
+      console.log("audit log is empty.");
+      return;
+    }
+    for (const e of shown) {
+      console.log(`${e.ts}  ${e.decision.toUpperCase().padEnd(8)} ${e.tier.padEnd(9)} ${e.tool}(${e.summary})`);
+    }
+  });
+
+program
   .command("resume")
   .description("continue a session from its last checkpoint")
   .argument("<id>", "session id (or unique prefix)")
@@ -88,6 +107,7 @@ program
       return;
     }
     const { model, label } = await resolveModel(session.model.includes(":") ? session.model : undefined);
+    const audit = openAuditLog(auditLogPath());
     const events = observeSession(
       runAgent({
         resume: true,
@@ -96,6 +116,7 @@ program
         policy: policyFrom(opts),
         checkpointer: openCheckpointer(),
         threadId: session.id,
+        audit: audit.record,
       }),
       store,
       session.id,

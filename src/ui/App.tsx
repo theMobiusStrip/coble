@@ -1,11 +1,11 @@
 import { useCallback, useRef, useState } from "react";
-import { Box, Text, useApp } from "ink";
+import { Box, Text, useApp, useInput } from "ink";
 import TextInput from "ink-text-input";
 import Spinner from "ink-spinner";
 import type { ApprovalPolicy } from "../core/approval.js";
 import { formatUsage } from "../core/cost.js";
 import { runAgent, type EngineOptions } from "../core/engine.js";
-import type { AgentEvent } from "../core/events.js";
+import type { AgentEvent, PendingCall } from "../core/events.js";
 import { resolveModel, type ResolvedModel } from "../core/models.js";
 
 export type EngineFn = (opts: EngineOptions) => AsyncIterable<AgentEvent>;
@@ -33,11 +33,45 @@ export function App({ cwd, policy, modelSpec, initialPrompt, engine, resolver }:
   const [lines, setLines] = useState<Line[]>([]);
   const [streamText, setStreamText] = useState("");
   const [busy, setBusy] = useState(false);
+  const [approval, setApproval] = useState<PendingCall[] | null>(null);
   const modelRef = useRef<ResolvedModel | null>(null);
+  const approvalResolver = useRef<((decisions: Record<string, boolean>) => void) | null>(null);
 
   const append = useCallback((line: Line) => {
     setLines((prev) => [...prev.slice(-MAX_LINES), line]);
   }, []);
+
+  // Bridge the engine's onApproval promise to a y/N keypress.
+  const onApproval = useCallback(
+    (calls: PendingCall[]) =>
+      new Promise<Record<string, boolean>>((resolve) => {
+        setApproval(calls);
+        approvalResolver.current = resolve;
+      }),
+    [],
+  );
+
+  const decide = useCallback(
+    (approved: boolean) => {
+      const calls = approval;
+      const resolver = approvalResolver.current;
+      if (calls === null || resolver === null) return;
+      setApproval(null);
+      approvalResolver.current = null;
+      append({ kind: approved ? "info" : "denied", text: `${approved ? "✓ approved" : "✗ denied"}: ${calls.map((c) => c.name).join(", ")}` });
+      resolver(Object.fromEntries(calls.map((c) => [c.id, approved])));
+    },
+    [append, approval],
+  );
+
+  useInput(
+    (inputChar) => {
+      if (approval === null) return;
+      if (inputChar.toLowerCase() === "y") decide(true);
+      else if (inputChar.toLowerCase() === "n") decide(false);
+    },
+    { isActive: approval !== null },
+  );
 
   const submit = useCallback(
     async (raw: string) => {
@@ -56,7 +90,7 @@ export function App({ cwd, policy, modelSpec, initialPrompt, engine, resolver }:
           modelRef.current = await (resolver ?? resolveModel)(modelSpec);
         }
         const { model, label } = modelRef.current;
-        const run = (engine ?? runAgent)({ prompt, cwd, model, policy });
+        const run = (engine ?? runAgent)({ prompt, cwd, model, policy, onApproval });
         for await (const ev of run) {
           switch (ev.type) {
             case "token":
@@ -88,6 +122,9 @@ export function App({ cwd, policy, modelSpec, initialPrompt, engine, resolver }:
             case "error":
               append({ kind: "error", text: `error: ${ev.message}` });
               break;
+            case "approval_required":
+              // The onApproval callback drives the prompt UI; nothing to log here.
+              break;
             default:
               break;
           }
@@ -100,7 +137,7 @@ export function App({ cwd, policy, modelSpec, initialPrompt, engine, resolver }:
         setBusy(false);
       }
     },
-    [append, busy, cwd, engine, exit, modelSpec, policy, resolver],
+    [append, busy, cwd, engine, exit, modelSpec, onApproval, policy, resolver],
   );
 
   return (
@@ -121,7 +158,21 @@ export function App({ cwd, policy, modelSpec, initialPrompt, engine, resolver }:
         </Text>
       ))}
       {streamText.length > 0 ? <Text>{streamText}</Text> : null}
-      {busy ? (
+      {approval !== null ? (
+        <Box flexDirection="column" marginTop={1}>
+          <Text bold color="yellow">
+            ⚠ approval required — {approval.length} call(s):
+          </Text>
+          {approval.map((c) => (
+            <Text key={c.id} color="yellow">
+              {"  "}[{c.tier}] {c.name}({c.summary})
+            </Text>
+          ))}
+          <Text>
+            approve? <Text color="green">y</Text> / <Text color="red">n</Text>
+          </Text>
+        </Box>
+      ) : busy ? (
         <Text color="yellow">
           <Spinner type="dots" /> working…
         </Text>
