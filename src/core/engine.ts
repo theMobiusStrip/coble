@@ -1,6 +1,7 @@
 import { HumanMessage, isAIMessage } from "@langchain/core/messages";
 import type { BaseChatModel } from "@langchain/core/language_models/chat_models";
 import { Command, MemorySaver, type BaseCheckpointSaver } from "@langchain/langgraph";
+import type { StructuredToolInterface } from "@langchain/core/tools";
 import { DEFAULT_POLICY, type ApprovalPolicy } from "./approval.js";
 import { totalUsage } from "./cost.js";
 import type { AgentEvent, PendingCall } from "./events.js";
@@ -23,6 +24,8 @@ export interface EngineOptions {
   resume?: boolean;
   /** Provide to enable human-in-the-loop approval of policy-exceeding calls. */
   onApproval?: ApprovalHandler;
+  /** Additional tools (e.g. git/PR) appended to the core toolset. */
+  extraTools?: StructuredToolInterface[];
   systemExtra?: string;
   maxSteps?: number;
   audit?: (entry: AuditEntry) => void;
@@ -56,7 +59,7 @@ export function runAgent(opts: EngineOptions): AsyncIterable<AgentEvent> {
 
   const app = buildGraph({
     model: opts.model,
-    tools: makeCoreTools({ cwd: opts.cwd }),
+    tools: [...makeCoreTools({ cwd: opts.cwd }), ...(opts.extraTools ?? [])],
     policy: opts.policy ?? DEFAULT_POLICY,
     cwd: opts.cwd,
     emit,

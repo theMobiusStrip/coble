@@ -87,6 +87,7 @@ export function classifyToolCall(name: string, args: Record<string, unknown>): D
       return "confirm";
     case "bash":
       return classifyBash(String(args.command ?? ""));
+    case "git_branch":
     case "git_commit":
     case "git_push":
     case "create_pull_request":
@@ -102,6 +103,9 @@ export function summarizeCall(name: string, args: Record<string, unknown>): stri
   if (name === "read_file" || name === "write_file" || name === "edit_file") {
     return String(args.path ?? "");
   }
+  if (name === "git_branch") return String(args.name ?? "");
+  if (name === "git_commit") return String(args.message ?? "");
+  if (name === "create_pull_request") return String(args.title ?? "");
   const json = JSON.stringify(args);
   return json.length > 120 ? `${json.slice(0, 120)}…` : json;
 }

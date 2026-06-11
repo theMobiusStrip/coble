@@ -8,9 +8,12 @@ import { openCheckpointer } from "./core/checkpointer.js";
 import { formatUsage } from "./core/cost.js";
 import { runAgent } from "./core/engine.js";
 import { resolveModel } from "./core/models.js";
+import { REVIEW_PROMPT } from "./core/prompts.js";
 import { observeSession } from "./core/sessionRunner.js";
 import { openSessionStore } from "./core/sessions.js";
 import { auditLogPath } from "./core/store.js";
+import { makeGitTools } from "./core/tools/gitTools.js";
+import { runHeadless } from "./headless.js";
 import { renderPrint } from "./print.js";
 import { formatSessionsTable } from "./sessionsView.js";
 import { App } from "./ui/App.js";
@@ -51,16 +54,7 @@ program
     if (opts.print) {
       if (prompt.length === 0) program.error('print mode needs a prompt: coble -p "do something"');
       const { model, label } = await resolveModel(opts.model);
-      const store = openSessionStore();
-      const audit = openAuditLog(auditLogPath());
-      const session = store.create({ cwd, model: label, prompt, nowIso: new Date().toISOString() });
-      const events = observeSession(
-        runAgent({ prompt, cwd, model, policy, checkpointer: openCheckpointer(), threadId: session.id, audit: audit.record }),
-        store,
-        session.id,
-      );
-      console.log(`\x1b[2msession ${session.id}\x1b[0m`);
-      process.exitCode = await renderPrint(events, { modelLabel: label, formatUsage: (u) => formatUsage(label, u) });
+      process.exitCode = await runHeadless({ prompt, cwd, model, modelLabel: label, policy });
       return;
     }
 
@@ -75,6 +69,36 @@ program
   .action(() => {
     const store = openSessionStore();
     console.log(formatSessionsTable(store.list(), Date.now()));
+  });
+
+program
+  .command("review")
+  .description("audit a repository → AUDIT.md → branch + pull request (dry-run)")
+  .argument("[path]", "repo path", process.cwd())
+  .option("-m, --model <spec>", "model as provider:name")
+  .option("--live-pr", "actually open the PR via gh (default: dry-run)")
+  .option("--dangerously-allow", "auto-approve git/PR actions (needed for headless runs)")
+  .option("--paranoid", "also ask approval for workspace writes")
+  .action(async function (this: Command, repoPath: string) {
+    // -m collides with the root command's flag; merge globals to read it.
+    const opts = this.optsWithGlobals() as {
+      model?: string;
+      livePr?: boolean;
+      dangerouslyAllow?: boolean;
+      paranoid?: boolean;
+    };
+    const cwd = path.resolve(repoPath);
+    const { model, label } = await resolveModel(opts.model);
+    const gitTools = makeGitTools({ cwd }, { dryRun: !opts.livePr });
+    process.exitCode = await runHeadless({
+      prompt: "Audit this repository and open a pull request with your findings.",
+      cwd,
+      model,
+      modelLabel: label,
+      policy: policyFrom(opts),
+      extraTools: gitTools,
+      systemExtra: REVIEW_PROMPT,
+    });
   });
 
 program
