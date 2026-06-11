@@ -120,7 +120,9 @@ program
   .option("-f, --filter <substr>", "only run tasks whose id includes this substring")
   .option("--write", "write evals/RESULTS.md")
   .option("--tasks <dir>", "tasks directory", TASKS_DIR)
-  .action(async (opts: { model?: string; filter?: string; write?: boolean; tasks: string }) => {
+  .action(async function (this: Command) {
+    // -m collides with the root command's flag; merge globals to read it.
+    const opts = this.optsWithGlobals() as { model?: string; filter?: string; write?: boolean; tasks: string };
     let tasks = loadTasks(opts.tasks);
     if (opts.filter) tasks = tasks.filter((t) => t.id.includes(opts.filter!));
     if (tasks.length === 0) {

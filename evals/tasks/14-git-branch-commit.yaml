@@ -18,8 +18,9 @@ script:
       - name: git_commit
         args: { message: "add NOTES.md", paths: [NOTES.md] }
   - content: Added NOTES.md on feature/notes.
+# Outcome: NOTES.md committed on the feature branch. The commit *message*
+# wording is the model's choice — assert the commit happened, not its text.
 assert:
   - file_exists: NOTES.md
   - git_current_branch: feature/notes
-  - git_head_contains: NOTES.md
   - audit_decision: { tool: git_commit, decision: approved }

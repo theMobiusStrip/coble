@@ -65,10 +65,13 @@ export async function evaluate(assertions: Assertion[], cap: RunCapture): Promis
       else if (!new RegExp(a.file_regex.pattern).test(c)) failures.push(`${a.file_regex.path} does not match /${a.file_regex.pattern}/`);
     }
     if (a.final_contains !== undefined) {
-      if (!cap.finalText.includes(a.final_contains)) failures.push(`final answer does not contain "${a.final_contains}"`);
+      // Natural-language match: case-insensitive (we assert outcomes, not exact wording).
+      if (!cap.finalText.toLowerCase().includes(a.final_contains.toLowerCase())) {
+        failures.push(`final answer does not contain "${a.final_contains}"`);
+      }
     }
     if (a.final_regex !== undefined) {
-      if (!new RegExp(a.final_regex).test(cap.finalText)) failures.push(`final answer does not match /${a.final_regex}/`);
+      if (!new RegExp(a.final_regex, "i").test(cap.finalText)) failures.push(`final answer does not match /${a.final_regex}/i`);
     }
     if (a.tool_called !== undefined) {
       if (!called.has(a.tool_called)) failures.push(`expected tool to be called: ${a.tool_called}`);

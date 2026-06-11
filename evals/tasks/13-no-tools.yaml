@@ -3,8 +3,9 @@ description: A pure question is answered without any tool calls
 prompt: What does the acronym CLI stand for? Answer in one sentence.
 script:
   - content: CLI stands for command-line interface.
+# Outcome: answers correctly with no tool use. Allow hyphen or space, any case.
 assert:
-  - final_contains: command-line interface
+  - final_regex: "command.line interface"
   - tool_not_called: bash
   - tool_not_called: write_file
   - max_steps: 0

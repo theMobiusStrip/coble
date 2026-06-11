@@ -9,8 +9,9 @@ script:
       - name: bash
         args: { command: "cat answer.txt" }
   - content: Confirmed — answer.txt contains 42.
+# Outcome: file written and the agent confirms the value. The verification
+# method (bash cat vs read_file) is the model's choice — don't pin it.
 assert:
   - file_contains: { path: answer.txt, text: "42" }
   - tool_called: write_file
-  - tool_called: bash
   - final_contains: "42"
