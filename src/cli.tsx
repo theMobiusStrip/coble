@@ -26,6 +26,7 @@ import { observeSession } from "./core/sessionRunner.js";
 import { openSessionStore } from "./core/sessions.js";
 import { auditLogPath, globalEnvPath } from "./core/store.js";
 import { makeGitTools } from "./core/tools/gitTools.js";
+import { renderDoctor, runDoctor } from "./doctor.js";
 import { loadTasks } from "./eval/load.js";
 import { renderConsole, renderMarkdown } from "./eval/report.js";
 import { runAll, scriptedModelFor, type ModelForTask } from "./eval/run.js";
@@ -154,6 +155,19 @@ program
       console.log(`\nwrote ${path.relative(process.cwd(), out)}`);
     }
     process.exitCode = passed === total ? 0 : 1;
+  });
+
+program
+  .command("doctor")
+  .description("check your setup: node, state dir, keys, model, connectivity, git/gh")
+  .option("--no-ping", "skip live network checks (provider ping, ollama)")
+  .action(async (opts: { ping: boolean }) => {
+    const { results, exitCode } = await runDoctor({ ping: opts.ping });
+    console.log(renderDoctor(results));
+    if (exitCode !== 0) {
+      console.log("\n\x1b[31msome checks failed\x1b[0m — fix the ✗ items above and re-run.");
+    }
+    process.exitCode = exitCode;
   });
 
 const config = program
