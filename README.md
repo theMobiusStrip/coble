@@ -23,6 +23,7 @@ coble is a small coding agent you run in your own terminal. The point isn't to o
 ```bash
 # 1. install — from source until the npm package ships
 git clone https://github.com/theMobiusStrip/coble.git && cd coble
+nvm install && nvm use                       # Node 22, from .nvmrc
 npm install && npm run build && npm link     # puts `coble` on your PATH
 # (once published, this becomes: npm install -g coble)
 
