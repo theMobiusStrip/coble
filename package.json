@@ -1,5 +1,5 @@
 {
-  "name": "coble",
+  "name": "@themobiusstrip/coble",
   "version": "0.1.0",
   "description": "A local, provider-agnostic agent CLI — LangGraph.js core, Ink TUI, durable sessions, human-in-the-loop approvals, built-in evals.",
   "type": "module",
@@ -25,7 +25,7 @@
     "node": ">=22"
   },
   "bin": {
-    "coble": "./dist/cli.js"
+    "coble": "dist/cli.js"
   },
   "files": [
     "dist",
@@ -36,7 +36,7 @@
   "scripts": {
     "dev": "tsx src/cli.tsx",
     "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
-    "build": "npm run clean && tsc -p tsconfig.build.json",
+    "build": "npm run clean && tsc -p tsconfig.build.json && node -e \"require('node:fs').chmodSync('dist/cli.js',0o755)\"",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
