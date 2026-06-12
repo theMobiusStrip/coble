@@ -3,7 +3,7 @@ import path from "node:path";
 import { execa } from "execa";
 import { HumanMessage } from "@langchain/core/messages";
 import { maskValue, sourceOf } from "./core/config.js";
-import { resolveModel } from "./core/models.js";
+import { resolveModel, type ResolvedModel } from "./core/models.js";
 import { ensureHome, globalEnvPath } from "./core/store.js";
 
 export type CheckStatus = "ok" | "warn" | "fail";
@@ -77,12 +77,11 @@ export async function runDoctor(opts: DoctorOptions): Promise<{ results: CheckRe
     push(key, "ok", `${maskValue(value)} (from ${sourceOf(key, cwd) ?? "shell"})`);
   }
 
-  // default model resolution
-  let defaultSpec: string | undefined;
+  // default model resolution (kept for the ping below — no second resolve)
+  let resolved: ResolvedModel | undefined;
   try {
-    const { label } = await resolveModel(undefined);
-    defaultSpec = label;
-    push("default model", "ok", label);
+    resolved = await resolveModel(undefined);
+    push("default model", "ok", resolved.label);
   } catch (err) {
     const first = (err instanceof Error ? err.message : String(err)).split("\n")[0] ?? "unresolved";
     const usingOllama = (process.env.COBLE_MODEL ?? "").startsWith("ollama:");
@@ -101,14 +100,13 @@ export async function runDoctor(opts: DoctorOptions): Promise<{ results: CheckRe
   }
 
   // live provider ping (costs a fraction of a cent)
-  if (opts.ping && defaultSpec !== undefined && !defaultSpec.startsWith("ollama:")) {
+  if (opts.ping && resolved !== undefined && !resolved.label.startsWith("ollama:")) {
     try {
-      const { model, label } = await resolveModel(undefined);
       const t0 = Date.now();
-      await model.invoke([new HumanMessage("Reply with exactly: ok")], {
+      await resolved.model.invoke([new HumanMessage("Reply with exactly: ok")], {
         signal: AbortSignal.timeout(20_000),
       });
-      push("provider ping", "ok", `${label} responded in ${Date.now() - t0}ms`);
+      push("provider ping", "ok", `${resolved.label} responded in ${Date.now() - t0}ms`);
     } catch (err) {
       const msg = (err instanceof Error ? err.message : String(err)).split("\n")[0] ?? "";
       push("provider ping", "fail", msg.slice(0, 120));

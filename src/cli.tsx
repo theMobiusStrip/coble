@@ -178,6 +178,14 @@ config
   .command("set <key> <value>")
   .description("save a key, e.g. coble config set OPENAI_API_KEY sk-...")
   .action((key: string, value: string) => {
+    if (key === "COBLE_HOME") {
+      console.error(
+        "COBLE_HOME can't live in the global config — the config file is located *via* COBLE_HOME.\n" +
+          "set it in your shell instead: export COBLE_HOME=/path/to/state",
+      );
+      process.exitCode = 1;
+      return;
+    }
     setGlobalConfig(key, value);
     if (!(KNOWN_KEYS as readonly string[]).includes(key)) {
       console.log(`note: "${key}" is not a key coble reads itself; saving anyway.`);

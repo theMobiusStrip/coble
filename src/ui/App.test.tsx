@@ -1,9 +1,14 @@
-import { describe, expect, it } from "vitest";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { render } from "ink-testing-library";
 import { DEFAULT_POLICY } from "../core/approval.js";
+import { readEnvFile } from "../core/config.js";
 import type { AgentEvent } from "../core/events.js";
 import type { EngineOptions } from "../core/engine.js";
-import { App } from "./App.js";
+import { globalEnvPath } from "../core/store.js";
+import { App, defaultSetupDeps } from "./App.js";
 
 const tick = (ms = 30) => new Promise((r) => setTimeout(r, ms));
 
@@ -167,5 +172,53 @@ describe("App", () => {
     expect(frame).toContain("setup skipped");
     expect(frame).toContain("coble config set");
     unmount();
+  });
+});
+
+// The TUI tests above exercise the seams with fakes; this block covers the
+// real default implementations (resolution, validation, persistence).
+describe("defaultSetupDeps", () => {
+  const TOUCHED = ["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "COBLE_MODEL", "COBLE_HOME", "ONBOARD_TEST_KEY"] as const;
+  const saved: Record<string, string | undefined> = {};
+  let home: string;
+
+  beforeEach(async () => {
+    for (const k of TOUCHED) {
+      saved[k] = process.env[k];
+      delete process.env[k];
+    }
+    home = await mkdtemp(path.join(tmpdir(), "coble-onboard-"));
+    process.env.COBLE_HOME = home;
+  });
+
+  afterEach(async () => {
+    await rm(home, { recursive: true, force: true });
+    for (const k of TOUCHED) {
+      if (saved[k] === undefined) delete process.env[k];
+      else process.env[k] = saved[k];
+    }
+  });
+
+  it("needsSetup: true with nothing configured; false with -m or COBLE_MODEL", async () => {
+    expect(await defaultSetupDeps.needsSetup(undefined)).toBe(true);
+    expect(await defaultSetupDeps.needsSetup("scripted:whatever.json")).toBe(false);
+    process.env.COBLE_MODEL = "ollama:llama3.1";
+    expect(await defaultSetupDeps.needsSetup(undefined)).toBe(false);
+  });
+
+  it("validate: drives a real model invoke (scripted, offline)", async () => {
+    const script = path.join(home, "ping.json");
+    await writeFile(script, JSON.stringify([{ content: "ok" }]), "utf8");
+    await expect(defaultSetupDeps.validate(`scripted:${script}`)).resolves.toBeUndefined();
+    await expect(defaultSetupDeps.validate("scripted:/nonexistent.json")).rejects.toThrow();
+  });
+
+  it("save: persists to the global config file and the live process env", async () => {
+    defaultSetupDeps.save({ ONBOARD_TEST_KEY: "sk-saved-123", COBLE_MODEL: "openai:gpt-5.5" });
+    expect(process.env.ONBOARD_TEST_KEY).toBe("sk-saved-123");
+    expect(readEnvFile(globalEnvPath())).toMatchObject({
+      ONBOARD_TEST_KEY: "sk-saved-123",
+      COBLE_MODEL: "openai:gpt-5.5",
+    });
   });
 });

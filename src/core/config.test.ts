@@ -93,14 +93,11 @@ describe("layered precedence", () => {
     // shell wins over everything
     process.env.CFG_SHELL = "shell";
 
-    const { applied } = loadLayeredEnv({ cwd: project });
+    loadLayeredEnv({ cwd: project });
 
     expect(process.env.CFG_SHELL).toBe("shell"); // untouched
     expect(process.env.CFG_FOO).toBe("project"); // project beats global
     expect(process.env.CFG_BAR).toBe("global"); // global fills the gap
-    expect(applied.CFG_FOO).toBe("project");
-    expect(applied.CFG_BAR).toBe("global");
-    expect(applied.CFG_SHELL).toBeUndefined();
 
     // provenance helper agrees
     expect(sourceOf("CFG_SHELL", project)).toBe("shell");

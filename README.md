@@ -170,7 +170,7 @@ For a longer architecture write-up, see [docs/blog/architecture.md](./docs/blog/
 npm install        # from a clone
 npm run dev        # tsx src/cli.tsx
 npm run typecheck
-npm test           # vitest (84 tests)
+npm test           # vitest
 npm run eval       # scripted eval suite
 npm run build
 npm run pack:dry   # inspect the npm package without publishing

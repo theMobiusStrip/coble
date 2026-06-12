@@ -3,13 +3,15 @@ import path from "node:path";
 import { parseEnv } from "node:util";
 import { globalEnvPath } from "./store.js";
 
-/** Keys coble understands. Others are accepted with a warning. */
+/** Keys coble understands. Others are accepted with a warning.
+ *  COBLE_HOME is deliberately absent: the global config file lives at
+ *  $COBLE_HOME/env, so storing COBLE_HOME inside it is circular — it must
+ *  come from the shell (or a project .env). */
 export const KNOWN_KEYS = [
   "OPENAI_API_KEY",
   "ANTHROPIC_API_KEY",
   "COBLE_MODEL",
   "OLLAMA_HOST",
-  "COBLE_HOME",
 ] as const;
 
 const KEY_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -62,31 +64,22 @@ export function unsetGlobalConfig(key: string, file: string = globalEnvPath()): 
 
 export type EnvSource = "shell" | "project" | "global";
 
-export interface LayeredEnvResult {
-  /** Keys this call injected into process.env, and where each came from. */
-  applied: Record<string, Extract<EnvSource, "project" | "global">>;
-}
-
 /**
  * Load configuration into process.env with precedence:
  *   shell env  >  <cwd>/.env  >  ~/.coble/env
  * Earlier sources win — a file never overrides what is already set.
  * The project .env is loaded first so it may set COBLE_HOME and thereby
- * relocate the global file.
+ * relocate the global file. Provenance, when needed (doctor), is derived
+ * by sourceOf() rather than tracked here.
  */
-export function loadLayeredEnv(opts: { cwd?: string } = {}): LayeredEnvResult {
-  const applied: LayeredEnvResult["applied"] = {};
-  const apply = (vars: Record<string, string>, source: "project" | "global") => {
+export function loadLayeredEnv(opts: { cwd?: string } = {}): void {
+  const apply = (vars: Record<string, string>) => {
     for (const [k, v] of Object.entries(vars)) {
-      if (process.env[k] === undefined) {
-        process.env[k] = v;
-        applied[k] = source;
-      }
+      if (process.env[k] === undefined) process.env[k] = v;
     }
   };
-  apply(readEnvFile(path.join(opts.cwd ?? process.cwd(), ".env")), "project");
-  apply(readEnvFile(globalEnvPath()), "global");
-  return { applied };
+  apply(readEnvFile(path.join(opts.cwd ?? process.cwd(), ".env")));
+  apply(readEnvFile(globalEnvPath()));
 }
 
 /** Where an effective env key comes from (for doctor / diagnostics). */
