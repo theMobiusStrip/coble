@@ -32,9 +32,12 @@ function approvalEngine(): (opts: EngineOptions) => AsyncIterable<AgentEvent> {
   };
 }
 
+const noSetup = { needsSetup: async () => false };
+
 describe("App", () => {
-  it("renders banner and input prompt", () => {
-    const { lastFrame, unmount } = render(<App cwd="/tmp" policy={DEFAULT_POLICY} />);
+  it("renders banner and input prompt", async () => {
+    const { lastFrame, unmount } = render(<App cwd="/tmp" policy={DEFAULT_POLICY} setup={noSetup} />);
+    await tick();
     expect(lastFrame()).toContain("coble");
     expect(lastFrame()).toContain(">");
     unmount();
@@ -43,7 +46,7 @@ describe("App", () => {
   it("runs a task through an injected engine and renders the transcript", async () => {
     const resolver = async () => ({ model: {} as never, label: "fake:model" });
     const { lastFrame, stdin, unmount } = render(
-      <App cwd="/tmp" policy={DEFAULT_POLICY} engine={() => fakeRun()} resolver={resolver} />,
+      <App cwd="/tmp" policy={DEFAULT_POLICY} engine={() => fakeRun()} resolver={resolver} setup={noSetup} />,
     );
     await tick();
     stdin.write("do the thing");
@@ -60,7 +63,7 @@ describe("App", () => {
   it("shows an approval prompt and denies on 'n'", async () => {
     const resolver = async () => ({ model: {} as never, label: "fake:model" });
     const { lastFrame, stdin, unmount } = render(
-      <App cwd="/tmp" policy={DEFAULT_POLICY} engine={approvalEngine()} resolver={resolver} />,
+      <App cwd="/tmp" policy={DEFAULT_POLICY} engine={approvalEngine()} resolver={resolver} setup={noSetup} />,
     );
     await tick();
     stdin.write("delete stuff");
@@ -81,7 +84,7 @@ describe("App", () => {
   it("approves on 'y' and continues", async () => {
     const resolver = async () => ({ model: {} as never, label: "fake:model" });
     const { lastFrame, stdin, unmount } = render(
-      <App cwd="/tmp" policy={DEFAULT_POLICY} engine={approvalEngine()} resolver={resolver} />,
+      <App cwd="/tmp" policy={DEFAULT_POLICY} engine={approvalEngine()} resolver={resolver} setup={noSetup} />,
     );
     await tick();
     stdin.write("do it");
@@ -94,6 +97,75 @@ describe("App", () => {
     const frame = lastFrame() ?? "";
     expect(frame).toContain("✓ approved");
     expect(frame).toContain("removed");
+    unmount();
+  });
+
+  it("first run: provider select → masked key → validate → save", async () => {
+    const savedEntries: Record<string, string> = {};
+    const validated: string[] = [];
+    const setup = {
+      needsSetup: async () => true,
+      save: (e: Record<string, string>) => Object.assign(savedEntries, e),
+      validate: async (spec: string) => {
+        validated.push(spec);
+      },
+    };
+    const { lastFrame, stdin, unmount } = render(<App cwd="/tmp" policy={DEFAULT_POLICY} setup={setup} />);
+    await tick(50);
+    expect(lastFrame()).toContain("first-run setup");
+
+    stdin.write("1"); // OpenAI
+    await tick(50);
+    expect(lastFrame()).toContain("OPENAI_API_KEY");
+
+    stdin.write("sk-test-123456789");
+    await tick(30);
+    expect(lastFrame()).not.toContain("sk-test-123456789"); // masked input
+    stdin.write("\r");
+    await tick(80);
+
+    expect(validated).toEqual(["openai:gpt-5.5"]);
+    expect(savedEntries).toMatchObject({ OPENAI_API_KEY: "sk-test-123456789", COBLE_MODEL: "openai:gpt-5.5" });
+    const frame = lastFrame() ?? "";
+    expect(frame).toContain("saved globally");
+    expect(frame).toContain(">"); // back to the normal input
+    unmount();
+  });
+
+  it("first run: failed validation shows the error and allows retry", async () => {
+    let calls = 0;
+    const setup = {
+      needsSetup: async () => true,
+      save: () => {},
+      validate: async () => {
+        calls += 1;
+        throw new Error("401 Incorrect API key provided");
+      },
+    };
+    const { lastFrame, stdin, unmount } = render(<App cwd="/tmp" policy={DEFAULT_POLICY} setup={setup} />);
+    await tick(50);
+    stdin.write("2"); // Anthropic
+    await tick(50);
+    stdin.write("bad-key");
+    await tick(30);
+    stdin.write("\r");
+    await tick(80);
+    expect(calls).toBe(1);
+    const frame = lastFrame() ?? "";
+    expect(frame).toContain("401");
+    expect(frame).toContain("key>"); // still on the key step for retry
+    unmount();
+  });
+
+  it("first run: q skips setup with a hint", async () => {
+    const setup = { needsSetup: async () => true, save: () => {}, validate: async () => {} };
+    const { lastFrame, stdin, unmount } = render(<App cwd="/tmp" policy={DEFAULT_POLICY} setup={setup} />);
+    await tick(50);
+    stdin.write("q");
+    await tick(50);
+    const frame = lastFrame() ?? "";
+    expect(frame).toContain("setup skipped");
+    expect(frame).toContain("coble config set");
     unmount();
   });
 });
