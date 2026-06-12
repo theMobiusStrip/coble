@@ -220,6 +220,27 @@ describe("App", () => {
     unmount();
   });
 
+  it("surfaces a run that hit the step cap with no answer, even with tools hidden", async () => {
+    async function* run(): AsyncGenerator<AgentEvent> {
+      yield { type: "tool_start", name: "bash", input: "curl …", tier: "safe" };
+      yield { type: "tool_end", name: "bash", ok: true, output: "html…", ms: 5 };
+      yield { type: "final", text: "", steps: 40, usage: { inputTokens: 9, outputTokens: 1 }, capped: true };
+    }
+    const resolver = async () => ({ model: {} as never, label: "fake:model" });
+    const { lastFrame, stdin, unmount } = render(
+      <App cwd="/tmp" policy={DEFAULT_POLICY} engine={() => run()} resolver={resolver} setup={noSetup} />,
+    );
+    await tick();
+    stdin.write("research something");
+    await tick();
+    stdin.write("\r");
+    await tick(100);
+    const frame = lastFrame() ?? "";
+    expect(frame).toContain("stopped at the 40-step limit without a final answer");
+    expect(frame).toContain("tab to inspect");
+    unmount();
+  });
+
   it("first run: provider select → masked key → validate → save", async () => {
     const savedEntries: Record<string, string> = {};
     const validated: string[] = [];

@@ -86,6 +86,7 @@ describe("runAgent end-to-end (scripted model)", () => {
     if (final?.type === "final") {
       expect(final.text).toContain("Done");
       expect(final.steps).toBe(3);
+      expect(final.capped).toBe(false); // finished on its own, well under the cap
       // 3 scripted turns × (100 in / 25 out)
       expect(final.usage).toEqual({ inputTokens: 300, outputTokens: 75 });
     }
@@ -135,7 +136,10 @@ describe("runAgent end-to-end (scripted model)", () => {
     );
     const final = events.at(-1);
     expect(final?.type).toBe("final");
-    if (final?.type === "final") expect(final.steps).toBe(3);
+    if (final?.type === "final") {
+      expect(final.steps).toBe(3);
+      expect(final.capped).toBe(true); // callers can tell "ran out of budget" from "finished"
+    }
   });
 
   it("reports unknown tools as errors to the model, not crashes", async () => {

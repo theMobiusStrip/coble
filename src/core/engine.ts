@@ -5,7 +5,7 @@ import type { StructuredToolInterface } from "@langchain/core/tools";
 import { DEFAULT_POLICY, type ApprovalPolicy } from "./approval.js";
 import { totalUsage } from "./cost.js";
 import type { AgentEvent, PendingCall } from "./events.js";
-import { buildGraph, type ApprovalRequest, type ApprovalResponse, type AuditEntry } from "./graph.js";
+import { buildGraph, DEFAULT_MAX_STEPS, type ApprovalRequest, type ApprovalResponse, type AuditEntry } from "./graph.js";
 import { AsyncQueue } from "./queue.js";
 import { makeCoreTools } from "./tools/index.js";
 
@@ -122,7 +122,8 @@ export function runAgent(opts: EngineOptions): AsyncIterable<AgentEvent> {
       const last = out.messages.at(-1);
       const text =
         last !== undefined && isAIMessage(last) && typeof last.content === "string" ? last.content : "";
-      queue.push({ type: "final", text, steps: out.steps, usage: totalUsage(out.messages) });
+      const capped = out.steps >= (opts.maxSteps ?? DEFAULT_MAX_STEPS);
+      queue.push({ type: "final", text, steps: out.steps, usage: totalUsage(out.messages), capped });
       queue.close();
     } catch (err) {
       if (opts.signal?.aborted) {

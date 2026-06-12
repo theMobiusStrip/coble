@@ -21,6 +21,6 @@ export type AgentEvent =
   | { type: "tool_end"; name: string; ok: boolean; output: string; ms: number }
   | { type: "tool_denied"; name: string; input: string; reason: string }
   | { type: "approval_required"; calls: PendingCall[] }
-  | { type: "final"; text: string; steps: number; usage: TokenUsage }
+  | { type: "final"; text: string; steps: number; usage: TokenUsage; capped?: boolean }
   | { type: "interrupted"; calls: PendingCall[] }
   | { type: "error"; message: string };

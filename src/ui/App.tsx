@@ -285,6 +285,7 @@ export function App({ cwd, policy, modelSpec, initialPrompt, engine, resolver, s
       append({ kind: "user", text: prompt });
       setBusy(true);
       let streamed = "";
+      let gotText = false;
       try {
         if (modelRef.current === null) {
           modelRef.current = await (resolver ?? resolveModel)(modelSpec);
@@ -300,7 +301,10 @@ export function App({ cwd, policy, modelSpec, initialPrompt, engine, resolver, s
               break;
             case "model_end": {
               const text = streamed.length > 0 ? streamed : ev.text;
-              if (text.trim().length > 0) append({ kind: "assistant", text: text.trim() });
+              if (text.trim().length > 0) {
+                append({ kind: "assistant", text: text.trim() });
+                gotText = true;
+              }
               streamed = "";
               setStreamText("");
               break;
@@ -325,6 +329,19 @@ export function App({ cwd, policy, modelSpec, initialPrompt, engine, resolver, s
                 inputTokens: u.inputTokens + ev.usage.inputTokens,
                 outputTokens: u.outputTokens + ev.usage.outputTokens,
               }));
+              // A run that produced no answer must say so — in hidden mode
+              // there is no tool trail to hint at what happened.
+              if (ev.capped && ev.text.trim().length === 0) {
+                append({
+                  kind: "error",
+                  text: `stopped at the ${ev.steps}-step limit without a final answer — press tab to inspect the tool trail`,
+                });
+              } else if (!gotText && ev.text.trim().length === 0) {
+                append({
+                  kind: "error",
+                  text: "the run ended without a final answer — press tab to inspect the tool trail",
+                });
+              }
               break;
             case "error":
               append({ kind: "error", text: ev.message });

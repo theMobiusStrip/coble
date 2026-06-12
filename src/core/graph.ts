@@ -69,7 +69,7 @@ export interface GraphDeps {
   maxSteps?: number;
 }
 
-const DEFAULT_MAX_STEPS = 40;
+export const DEFAULT_MAX_STEPS = 40;
 
 export function buildGraph(deps: GraphDeps) {
   const { model, tools, policy, cwd, emit, audit } = deps;
