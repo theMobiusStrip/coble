@@ -48,6 +48,10 @@ export async function renderPrint(
         break;
       case "final":
         closeStream();
+        if (ev.capped && ev.text.trim().length === 0) {
+          console.log(red(`⚠ stopped at the ${ev.steps}-step limit without a final answer`));
+          exitCode = 1;
+        }
         console.log(dim(`— done: ${ev.steps} step(s), ${opts.formatUsage(ev.usage)} [${opts.modelLabel}]`));
         break;
       case "error":

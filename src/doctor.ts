@@ -20,7 +20,7 @@ export interface DoctorOptions {
   cwd?: string;
 }
 
-const PROVIDER_KEYS = ["OPENAI_API_KEY", "ANTHROPIC_API_KEY"] as const;
+const PROVIDER_KEYS = ["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GOOGLE_API_KEY"] as const;
 
 async function checkBinary(name: string, args: string[]): Promise<string | null> {
   try {
@@ -55,7 +55,7 @@ export async function runDoctor(opts: DoctorOptions): Promise<{ results: CheckRe
   // global config file + permissions
   const cfgPath = globalEnvPath();
   if (!existsSync(cfgPath)) {
-    push("global config", "warn", `${cfgPath} not created yet — coble config set OPENAI_API_KEY <key>`);
+    push("global config", "warn", `${cfgPath} not created yet — coble config set GOOGLE_API_KEY <key>`);
   } else {
     const mode = statSync(cfgPath).mode & 0o777;
     if ((mode & 0o077) !== 0) {

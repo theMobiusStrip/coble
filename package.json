@@ -1,6 +1,6 @@
 {
   "name": "@themobiusstrip/coble",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "A local, provider-agnostic agent CLI — LangGraph.js core, Ink TUI, durable sessions, human-in-the-loop approvals, built-in evals.",
   "type": "module",
   "license": "MIT",
@@ -49,6 +49,7 @@
   "dependencies": {
     "@langchain/anthropic": "^1.4.0",
     "@langchain/core": "^1.1.48",
+    "@langchain/google-genai": "^2.1.31",
     "@langchain/langgraph": "^1.4.1",
     "@langchain/langgraph-checkpoint-sqlite": "^1.0.3",
     "@langchain/ollama": "^1.2.7",

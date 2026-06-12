@@ -70,12 +70,17 @@ describe("App", () => {
     await tick();
     stdin.write("\r");
     await tick(100);
-    const frame = lastFrame() ?? "";
-    expect(frame).toContain("Bash(ls)"); // tool tree, prettified name
-    expect(frame).toContain("x.txt"); // tool result under ⎿
+    let frame = lastFrame() ?? "";
+    expect(frame).not.toContain("Bash(ls)"); // tool trail hidden by default
     expect(frame).toContain("All done.");
     expect(frame).toContain("fake:model"); // status bar
     expect(frame).toContain("15 tok"); // accumulated usage (10 in + 5 out)
+
+    stdin.write("\t"); // → collapsed: tool tree visible
+    await tick(50);
+    frame = lastFrame() ?? "";
+    expect(frame).toContain("Bash(ls)"); // tool tree, prettified name
+    expect(frame).toContain("x.txt"); // tool result under ⎿
     unmount();
   });
 
@@ -121,6 +126,121 @@ describe("App", () => {
     unmount();
   });
 
+  it("tab cycles the tool trail: hidden (default) → collapsed → full → hidden", async () => {
+    async function* run(): AsyncGenerator<AgentEvent> {
+      yield { type: "tool_start", name: "bash", input: "python3 -c '\nimport os\nprint(1)'", tier: "safe" };
+      yield { type: "tool_end", name: "bash", ok: true, output: "l1\nl2\nl3\nl4\nl5\nl6", ms: 5 };
+      yield { type: "model_end", text: "Listed.", toolCallCount: 0 };
+      yield { type: "final", text: "Listed.", steps: 1, usage: { inputTokens: 1, outputTokens: 1 } };
+    }
+    const resolver = async () => ({ model: {} as never, label: "fake:model" });
+    const { lastFrame, stdin, unmount } = render(
+      <App cwd="/tmp" policy={DEFAULT_POLICY} engine={() => run()} resolver={resolver} setup={noSetup} />,
+    );
+    await tick();
+    stdin.write("list");
+    await tick();
+    stdin.write("\r");
+    await tick(100);
+
+    // hidden (default): clean conversation, no tool trail at all
+    let frame = lastFrame() ?? "";
+    expect(frame).toContain("Listed.");
+    expect(frame).not.toContain("Bash(");
+    expect(frame).toContain("tools: hidden"); // status bar shows the mode
+
+    stdin.write("\t"); // → collapsed
+    await tick(50);
+    frame = lastFrame() ?? "";
+    expect(frame).toContain("6 lines (tab to expand)");
+    expect(frame).not.toContain("l3");
+    expect(frame).toContain("python3 -c ' …"); // multi-line command → first line + ellipsis
+    expect(frame).not.toContain("import os");
+
+    stdin.write("\t"); // → full
+    await tick(50);
+    frame = lastFrame() ?? "";
+    expect(frame).toContain("l3");
+    expect(frame).toContain("l6");
+    expect(frame).toContain("import os"); // full command while expanded
+
+    stdin.write("\t"); // → hidden again
+    await tick(50);
+    expect(lastFrame() ?? "").not.toContain("Bash(");
+    unmount();
+  });
+
+  it("'a' approves all remaining calls this session without further prompts", async () => {
+    const engine = (opts: EngineOptions) => {
+      async function* gen(): AsyncGenerator<AgentEvent> {
+        const b1 = [{ id: "c1", name: "bash", summary: "curl a", tier: "dangerous" as const }];
+        yield { type: "approval_required", calls: b1 };
+        const d1 = await opts.onApproval!(b1);
+        yield { type: "tool_end", name: "bash", ok: true, output: "a", ms: 1 };
+
+        const b2 = [{ id: "c2", name: "bash", summary: "curl b", tier: "dangerous" as const }];
+        yield { type: "approval_required", calls: b2 };
+        const d2 = await opts.onApproval!(b2); // resolves instantly once approve-all is on
+
+        const b3 = [{ id: "c3", name: "write_file", summary: "out.md", tier: "confirm" as const }];
+        yield { type: "approval_required", calls: b3 };
+        const d3 = await opts.onApproval!(b3);
+
+        const verdict = `decisions: ${d1.c1}/${d2.c2}/${d3.c3}`;
+        yield { type: "model_end", text: verdict, toolCallCount: 0 };
+        yield { type: "final", text: verdict, steps: 3, usage: { inputTokens: 1, outputTokens: 1 } };
+      }
+      return gen();
+    };
+    const resolver = async () => ({ model: {} as never, label: "fake:model" });
+    const { lastFrame, stdin, unmount } = render(
+      <App cwd="/tmp" policy={DEFAULT_POLICY} engine={engine} resolver={resolver} setup={noSetup} />,
+    );
+    await tick();
+    stdin.write("do things");
+    await tick();
+    stdin.write("\r");
+    await tick(80);
+    expect(lastFrame() ?? "").toContain("approval required");
+    expect(lastFrame() ?? "").toContain("approve all");
+
+    stdin.write("a"); // approve batch 1 + enable approve-all
+    await tick(120);
+    let frame = lastFrame() ?? "";
+    expect(frame).toContain("auto-approving the rest of this session");
+    // batches 2 and 3 resolved without a prompt — straight to the final verdict
+    expect(frame).toContain("decisions: true/true/true");
+    expect(frame).toContain("auto-approve"); // status bar flag
+    expect(frame).not.toContain("✓ auto-approved"); // tool noise hidden by default
+
+    stdin.write("\t"); // → collapsed: auto-approval trail becomes visible
+    await tick(50);
+    frame = lastFrame() ?? "";
+    expect((frame.match(/✓ auto-approved/g) ?? []).length).toBe(2);
+    unmount();
+  });
+
+  it("surfaces a run that hit the step cap with no answer, even with tools hidden", async () => {
+    async function* run(): AsyncGenerator<AgentEvent> {
+      yield { type: "tool_start", name: "bash", input: "curl …", tier: "safe" };
+      yield { type: "tool_end", name: "bash", ok: true, output: "html…", ms: 5 };
+      yield { type: "final", text: "", steps: 40, usage: { inputTokens: 9, outputTokens: 1 }, capped: true };
+    }
+    const resolver = async () => ({ model: {} as never, label: "fake:model" });
+    const { lastFrame, stdin, unmount } = render(
+      <App cwd="/tmp" policy={DEFAULT_POLICY} engine={() => run()} resolver={resolver} setup={noSetup} />,
+    );
+    await tick();
+    stdin.write("research something");
+    await tick();
+    stdin.write("\r");
+    await tick(100);
+    const frame = lastFrame() ?? "";
+    expect(frame).toContain("stopped at the 40-step limit without a final answer");
+    expect(frame).toContain("tab to inspect");
+    unmount();
+  });
+
   it("first run: provider select → masked key → validate → save", async () => {
     const savedEntries: Record<string, string> = {};
     const validated: string[] = [];
@@ -151,6 +271,39 @@ describe("App", () => {
     expect(frame).toContain("saved globally");
     expect(frame).toContain("openai:gpt-5.5");
     expect(frame).toContain("›"); // back to the normal input
+    unmount();
+  });
+
+  it("first run: can configure Google AI", async () => {
+    const previous = process.env.GOOGLE_API_KEY;
+    const savedEntries: Record<string, string> = {};
+    const validated: string[] = [];
+    const setup = {
+      needsSetup: async () => true,
+      save: (e: Record<string, string>) => Object.assign(savedEntries, e),
+      validate: async (spec: string) => {
+        validated.push(spec);
+      },
+    };
+    const { lastFrame, stdin, unmount } = render(<App cwd="/tmp" policy={DEFAULT_POLICY} setup={setup} />);
+    await tick(50);
+    stdin.write("3"); // Google AI
+    await tick(50);
+    expect(lastFrame()).toContain("GOOGLE_API_KEY");
+
+    stdin.write("google-test-123456789");
+    await tick(30);
+    expect(lastFrame()).not.toContain("google-test-123456789");
+    stdin.write("\r");
+    await tick(80);
+
+    expect(validated).toEqual(["google:gemini-3.5-flash"]);
+    expect(savedEntries).toMatchObject({
+      GOOGLE_API_KEY: "google-test-123456789",
+      COBLE_MODEL: "google:gemini-3.5-flash",
+    });
+    if (previous === undefined) delete process.env.GOOGLE_API_KEY;
+    else process.env.GOOGLE_API_KEY = previous;
     unmount();
   });
 
@@ -195,7 +348,7 @@ describe("App", () => {
 // The TUI tests above exercise the seams with fakes; this block covers the
 // real default implementations (resolution, validation, persistence).
 describe("defaultSetupDeps", () => {
-  const TOUCHED = ["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "COBLE_MODEL", "COBLE_HOME", "ONBOARD_TEST_KEY"] as const;
+  const TOUCHED = ["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GOOGLE_API_KEY", "COBLE_MODEL", "COBLE_HOME", "ONBOARD_TEST_KEY"] as const;
   const saved: Record<string, string | undefined> = {};
   let home: string;
 

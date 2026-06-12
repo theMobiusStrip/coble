@@ -20,6 +20,7 @@ const PRICES: Array<[RegExp, [number, number]]> = [
   [/claude.*(opus)/i, [15, 75]],
   [/claude.*(sonnet)/i, [3, 15]],
   [/claude.*(haiku)/i, [1, 5]],
+  [/gemini-3\.5-flash/i, [1.5, 9]],
 ];
 
 export function estimateCostUsd(modelLabel: string, usage: TokenUsage): number | undefined {

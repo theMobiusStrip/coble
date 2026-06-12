@@ -3,7 +3,7 @@ import { Box, Text, useInput } from "ink";
 import TextInput from "ink-text-input";
 import Spinner from "ink-spinner";
 
-type Provider = "openai" | "anthropic";
+type Provider = "openai" | "anthropic" | "google";
 
 const PROVIDERS: Record<Provider, { key: string; spec: string; hint: string }> = {
   openai: {
@@ -15,6 +15,11 @@ const PROVIDERS: Record<Provider, { key: string; spec: string; hint: string }> =
     key: "ANTHROPIC_API_KEY",
     spec: "anthropic:claude-sonnet-4-6",
     hint: "https://console.anthropic.com/settings/keys",
+  },
+  google: {
+    key: "GOOGLE_API_KEY",
+    spec: "google:gemini-3.5-flash",
+    hint: "https://aistudio.google.com/app/apikey",
   },
 };
 
@@ -53,6 +58,9 @@ export function Onboarding({ save, validate, onDone, onSkip }: OnboardingProps) 
         setProvider("anthropic");
         setStep("key");
       } else if (ch === "3") {
+        setProvider("google");
+        setStep("key");
+      } else if (ch === "4") {
         save({ COBLE_MODEL: "ollama:llama3.1" });
         onDone("default model set to ollama:llama3.1 — make sure `ollama pull llama3.1` has run.", "ollama:llama3.1");
       } else if (ch === "q" || ink.escape) {
@@ -96,9 +104,12 @@ export function Onboarding({ save, validate, onDone, onSkip }: OnboardingProps) 
           {"  "}<Text color="green">2</Text> Anthropic (claude-sonnet-4-6)
         </Text>
         <Text>
-          {"  "}<Text color="green">3</Text> Ollama — local, free, no key
+          {"  "}<Text color="green">3</Text> Google AI (gemini-3.5-flash)
         </Text>
-        <Text dimColor>press 1/2/3 to choose, q to skip</Text>
+        <Text>
+          {"  "}<Text color="green">4</Text> Ollama — local, free, no key
+        </Text>
+        <Text dimColor>press 1/2/3/4 to choose, q to skip</Text>
       </Box>
     );
   }

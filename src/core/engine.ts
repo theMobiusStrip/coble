@@ -5,7 +5,7 @@ import type { StructuredToolInterface } from "@langchain/core/tools";
 import { DEFAULT_POLICY, type ApprovalPolicy } from "./approval.js";
 import { totalUsage } from "./cost.js";
 import type { AgentEvent, PendingCall } from "./events.js";
-import { buildGraph, type ApprovalRequest, type ApprovalResponse, type AuditEntry } from "./graph.js";
+import { buildGraph, DEFAULT_MAX_STEPS, type ApprovalRequest, type ApprovalResponse, type AuditEntry } from "./graph.js";
 import { AsyncQueue } from "./queue.js";
 import { makeCoreTools } from "./tools/index.js";
 
@@ -40,6 +40,25 @@ function extractApproval(out: unknown): { calls: PendingCall[] } | undefined {
   const env = out as InterruptEnvelope;
   const first = env.__interrupt__?.[0];
   return first ? { calls: first.value.calls } : undefined;
+}
+
+/**
+ * Bare greetings get an instant reply without an API round-trip — exact
+ * normalized match only. Topic routing deliberately does NOT live here:
+ * prompt-text matching can't tell a question that needs live external data
+ * from a workspace task that happens to use the same words, so every other
+ * input goes to the model.
+ */
+function quickDirectResponse(prompt: string | undefined): string | undefined {
+  const normalized = (prompt ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[.!?。！？]+$/u, "")
+    .replace(/\s+/g, " ");
+  const greetings = new Set(["hi", "hello", "hey", "hi there", "hello there", "hey there", "你好", "您好", "嗨", "哈喽"]);
+  if (greetings.has(normalized)) return "Hi. What would you like to work on?";
+
+  return undefined;
 }
 
 /**
@@ -78,6 +97,15 @@ export function runAgent(opts: EngineOptions): AsyncIterable<AgentEvent> {
 
   void (async () => {
     try {
+      const quick = opts.resume ? undefined : quickDirectResponse(opts.prompt);
+      if (quick !== undefined) {
+        emit({ type: "token", text: quick });
+        emit({ type: "model_end", text: quick, toolCallCount: 0, usage: { inputTokens: 0, outputTokens: 0 } });
+        queue.push({ type: "final", text: quick, steps: 0, usage: { inputTokens: 0, outputTokens: 0 } });
+        queue.close();
+        return;
+      }
+
       let input: unknown = opts.resume ? null : { messages: [new HumanMessage(opts.prompt ?? "")] };
       let out = await app.invoke(input as never, config);
 
@@ -94,7 +122,8 @@ export function runAgent(opts: EngineOptions): AsyncIterable<AgentEvent> {
       const last = out.messages.at(-1);
       const text =
         last !== undefined && isAIMessage(last) && typeof last.content === "string" ? last.content : "";
-      queue.push({ type: "final", text, steps: out.steps, usage: totalUsage(out.messages) });
+      const capped = out.steps >= (opts.maxSteps ?? DEFAULT_MAX_STEPS);
+      queue.push({ type: "final", text, steps: out.steps, usage: totalUsage(out.messages), capped });
       queue.close();
     } catch (err) {
       if (opts.signal?.aborted) {

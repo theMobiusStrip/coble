@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { setGlobalConfig } from "./core/config.js";
 import { renderDoctor, runDoctor } from "./doctor.js";
 
-const TOUCHED = ["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "COBLE_MODEL", "COBLE_HOME", "OLLAMA_HOST"] as const;
+const TOUCHED = ["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GOOGLE_API_KEY", "COBLE_MODEL", "COBLE_HOME", "OLLAMA_HOST"] as const;
 const saved: Record<string, string | undefined> = {};
 let home: string;
 let cwd: string;
@@ -53,6 +53,16 @@ describe("doctor", () => {
     const { results } = await runDoctor({ ping: false, cwd });
     const key = results.find((r) => r.name === "ANTHROPIC_API_KEY");
     expect(key?.detail).toContain("global");
+  });
+
+  it("passes with a Google AI key configured", async () => {
+    process.env.GOOGLE_API_KEY = "google-test-abcdefghijkl";
+    const { results, exitCode } = await runDoctor({ ping: false, cwd });
+    expect(exitCode).toBe(0);
+    const byName = Object.fromEntries(results.map((r) => [r.name, r]));
+    expect(byName.GOOGLE_API_KEY?.status).toBe("ok");
+    expect(byName.GOOGLE_API_KEY?.detail).toContain("shell");
+    expect(byName["default model"]?.detail).toBe("google:gemini-3.5-flash");
   });
 
   it("fails with no provider configured, pointing at config set", async () => {

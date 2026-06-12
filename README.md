@@ -13,7 +13,7 @@ coble is a small coding agent you run in your own terminal. The point isn't to o
 - **🔁 Durable sessions** — every step is checkpointed to SQLite. Kill the process mid-task and `coble resume <id>` continues from the last checkpoint *without re-running completed work*.
 - **🙋 Human-in-the-loop** — dangerous tool calls (arbitrary shell, `git push`, opening a PR) pause the whole graph via LangGraph's `interrupt()` and wait for terminal approval. Approvals survive a crash too.
 - **🛡️ Tiered tool sandbox** — every tool call is classified `safe` / `confirm` / `dangerous`; read-only shell commands run freely, everything else is gated. All calls are written to an append-only audit log.
-- **🔌 Provider-agnostic** — one flag switches OpenAI `gpt-5.5`, Anthropic Claude, or a fully local Ollama model.
+- **🔌 Provider-agnostic** — one flag switches OpenAI `gpt-5.5`, Anthropic Claude, Google Gemini, or a fully local Ollama model.
 - **🧪 Built-in evals** — 16 fixture-based tasks with outcome assertions, runnable against any model and run deterministically (key-free) in CI.
 
 ## Quickstart
@@ -23,7 +23,10 @@ coble is a small coding agent you run in your own terminal. The point isn't to o
 npm install -g @themobiusstrip/coble
 
 # 2. save a key once — effective from any directory afterwards
-coble config set OPENAI_API_KEY sk-...       # or ANTHROPIC_API_KEY sk-ant-...
+coble config set OPENAI_API_KEY sk-...       # or ANTHROPIC_API_KEY / GOOGLE_API_KEY
+# for Google AI as the default:
+# coble config set GOOGLE_API_KEY ...
+# coble config set COBLE_MODEL google:gemini-3.5-flash
 
 # 3. go
 coble -p "count the TODOs in src and summarize them"   # one-shot, headless
@@ -67,7 +70,8 @@ Keys coble reads:
 
 - `OPENAI_API_KEY` — [create one](https://platform.openai.com/api-keys)
 - `ANTHROPIC_API_KEY` — [create one](https://console.anthropic.com/settings/keys)
-- `COBLE_MODEL` — default model when `-m` is omitted, e.g. `openai:gpt-5.5`
+- `GOOGLE_API_KEY` — [create one](https://aistudio.google.com/app/apikey); free-tier keys have tight per-day request quotas, and an agent task makes several requests, so expect 429s unless billing is enabled
+- `COBLE_MODEL` — default model when `-m` is omitted, e.g. `openai:gpt-5.5` or `google:gemini-3.5-flash`
 - `OLLAMA_HOST` — remote/Docker Ollama endpoint (default `http://localhost:11434`)
 - `COBLE_HOME` — state directory (sessions, checkpoints, audit log, global config; default `~/.coble`)
 
@@ -111,7 +115,7 @@ docker run --rm -it \
 
 ### Flags
 
-- `-m, --model <provider:name>` — `openai:gpt-5.5`, `anthropic:claude-sonnet-4-6`, `ollama:llama3.1`, or `scripted:file.json`
+- `-m, --model <provider:name>` — `openai:gpt-5.5`, `anthropic:claude-sonnet-4-6`, `google:gemini-3.5-flash`, `ollama:llama3.1`, or `scripted:file.json`
 - `--paranoid` — also require approval for workspace writes
 - `--dangerously-allow` — auto-approve dangerous calls (headless automation)
 
@@ -143,7 +147,8 @@ The exact recording commands live in [docs/demo-scripts.md](./docs/demo-scripts.
         ┌──────────▼─────────┐            ┌────────────────────▼───────────┐
         │ model layer        │            │ tools: read/write/edit/bash    │
         │ openai│anthropic│  │            │ + git_branch/commit/push/PR    │
-        │ ollama│scripted    │            │ danger tiers · audit log       │
+        │ google│ollama│     │            │ danger tiers · audit log       │
+        │ scripted           │            │                                │
         └────────────────────┘            └────────────────────────────────┘
                                           │
                               ┌───────────▼───────────┐
