@@ -4,6 +4,23 @@
   "description": "A local, provider-agnostic agent CLI — LangGraph.js core, Ink TUI, durable sessions, human-in-the-loop approvals, built-in evals.",
   "type": "module",
   "license": "MIT",
+  "author": "Evan Zheng",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/theMobiusStrip/coble.git"
+  },
+  "bugs": {
+    "url": "https://github.com/theMobiusStrip/coble/issues"
+  },
+  "homepage": "https://github.com/theMobiusStrip/coble#readme",
+  "keywords": [
+    "agent",
+    "cli",
+    "langgraph",
+    "ink",
+    "llm",
+    "evals"
+  ],
   "engines": {
     "node": ">=22"
   },
@@ -12,15 +29,22 @@
   },
   "files": [
     "dist",
-    "evals/tasks"
+    "evals",
+    "docs",
+    ".env.example"
   ],
   "scripts": {
     "dev": "tsx src/cli.tsx",
-    "build": "tsc -p tsconfig.build.json",
+    "clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
+    "build": "npm run clean && tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
-    "eval": "tsx src/cli.tsx eval"
+    "eval": "tsx src/cli.tsx eval",
+    "prepack": "npm run build",
+    "prepublishOnly": "npm run typecheck && npm test && npm run build",
+    "pack:dry": "npm pack --dry-run --cache .tmp/npm-cache",
+    "docker:build": "docker build -t coble ."
   },
   "dependencies": {
     "@langchain/anthropic": "^1.4.0",

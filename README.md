@@ -26,6 +26,11 @@ See [evals/RESULTS.md](./evals/RESULTS.md) for the per-task table and [`evals/ta
 ## Install & run
 
 ```bash
+# after npm publish
+npx coble@latest --help
+npx coble@latest -p -m ollama:llama3.1 "explain this repo"
+
+# from a clone
 npm install
 npm run build
 
@@ -38,6 +43,26 @@ node dist/cli.js -p "count the TODOs in src and summarize them"
 # pick a model explicitly
 node dist/cli.js -p -m ollama:llama3.1 "explain this repo"
 node dist/cli.js -p -m openai:gpt-5.5 "..."
+```
+
+### Docker
+
+```bash
+docker build -t coble .
+
+# keep coble state outside the container and run against the current repo
+docker run --rm -it \
+  -v "$PWD:/workspace" \
+  -v "$HOME/.coble:/data" \
+  -e OPENAI_API_KEY \
+  coble -p -m openai:gpt-5.5 "summarize this repository"
+
+# local model path, assuming Ollama is reachable from the container
+docker run --rm -it \
+  -v "$PWD:/workspace" \
+  -v "$HOME/.coble:/data" \
+  -e OLLAMA_HOST=http://host.docker.internal:11434 \
+  coble -p -m ollama:llama3.1 "count TODOs in src"
 ```
 
 ### Commands
@@ -56,6 +81,18 @@ node dist/cli.js -p -m openai:gpt-5.5 "..."
 - `-m, --model <provider:name>` — `openai:gpt-5.5`, `anthropic:claude-sonnet-4-6`, `ollama:llama3.1`, or `scripted:file.json`
 - `--paranoid` — also require approval for workspace writes
 - `--dangerously-allow` — auto-approve dangerous calls (headless automation)
+
+## Demos
+
+The release demo set is three short terminal recordings:
+
+| Demo | Shows |
+| --- | --- |
+| Resume | checkpointed execution survives a killed process and resumes by session id |
+| Approval | dangerous `git push` intent pauses for approval; refusal changes the plan |
+| Repo review | `coble review <repo>` writes `AUDIT.md`, branches, pushes to a local bare remote and prepares a PR in dry-run mode |
+
+The exact recording commands live in [docs/demo-scripts.md](./docs/demo-scripts.md).
 
 ## How it works
 
@@ -88,6 +125,8 @@ The agent is a LangGraph `StateGraph` with an `agent → tools → agent` loop. 
 
 A bare agent loop is ~40 lines and needs no framework. coble leans on LangGraph specifically for the three things that *are* painful to hand-roll: **durable checkpointing**, **interrupt/resume for human approval**, and an inspectable execution graph. Everything else (tools, model layer, UI) is plain TypeScript talking to provider SDKs.
 
+For a longer architecture write-up, see [docs/blog/architecture.md](./docs/blog/architecture.md).
+
 ## Development
 
 ```bash
@@ -96,6 +135,8 @@ npm run typecheck
 npm test           # vitest (66 tests)
 npm run eval       # scripted eval suite
 npm run build
+npm run pack:dry   # inspect the npm package without publishing
+npm run docker:build
 ```
 
 ## License
