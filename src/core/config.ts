@@ -10,6 +10,7 @@ import { globalEnvPath } from "./store.js";
 export const KNOWN_KEYS = [
   "OPENAI_API_KEY",
   "ANTHROPIC_API_KEY",
+  "GOOGLE_API_KEY",
   "COBLE_MODEL",
   "OLLAMA_HOST",
 ] as const;

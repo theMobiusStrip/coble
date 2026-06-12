@@ -55,7 +55,7 @@ program
 program
   .argument("[prompt...]", "task for the agent")
   .option("-p, --print", "non-interactive: run one task, print events, exit")
-  .option("-m, --model <spec>", "provider:name (openai:gpt-5.5 | anthropic:claude-sonnet-4-6 | ollama:llama3.1 | scripted:file.json)")
+  .option("-m, --model <spec>", "provider:name (openai:gpt-5.5 | anthropic:claude-sonnet-4-6 | google:gemini-3.5-flash | ollama:llama3.1 | scripted:file.json)")
   .option("-C, --cwd <dir>", "workspace root", process.cwd())
   .option("--dangerously-allow", "auto-approve dangerous tool calls (shell, push, ...)")
   .option("--paranoid", "also ask approval for workspace writes")
@@ -176,7 +176,7 @@ const config = program
 
 config
   .command("set <key> <value>")
-  .description("save a key, e.g. coble config set OPENAI_API_KEY sk-...")
+  .description("save a key, e.g. coble config set GOOGLE_API_KEY <key>")
   .action((key: string, value: string) => {
     if (key === "COBLE_HOME") {
       console.error(
@@ -217,7 +217,7 @@ config
     const vars = readEnvFile(globalEnvPath());
     const entries = Object.entries(vars);
     if (entries.length === 0) {
-      console.log(`no config yet — try: coble config set OPENAI_API_KEY <key>`);
+      console.log(`no config yet — try: coble config set GOOGLE_API_KEY <key>`);
       return;
     }
     for (const [k, v] of entries) console.log(`${k}=${opts.reveal ? v : maskValue(v)}`);

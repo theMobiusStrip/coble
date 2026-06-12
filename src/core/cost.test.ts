@@ -12,6 +12,11 @@ describe("cost estimation", () => {
     expect(cost).toBeCloseTo(3, 5);
   });
 
+  it("prices gemini-3.5-flash at $1.5/$9 per 1M", () => {
+    const cost = estimateCostUsd("google:gemini-3.5-flash", { inputTokens: 1_000_000, outputTokens: 1_000_000 });
+    expect(cost).toBeCloseTo(10.5, 5);
+  });
+
   it("returns undefined for unpriced models (e.g. local ollama)", () => {
     expect(estimateCostUsd("ollama:llama3.1", { inputTokens: 100, outputTokens: 100 })).toBeUndefined();
   });

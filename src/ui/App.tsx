@@ -304,7 +304,7 @@ export function App({ cwd, policy, modelSpec, initialPrompt, engine, resolver, s
             onSkip={() => {
               append({
                 kind: "info",
-                text: "setup skipped — configure later with `coble config set OPENAI_API_KEY <key>` or pass -m.",
+                text: "setup skipped — configure later with `coble config set GOOGLE_API_KEY <key>` or pass -m.",
               });
               setSetupState("done");
             }}

@@ -154,6 +154,39 @@ describe("App", () => {
     unmount();
   });
 
+  it("first run: can configure Google AI", async () => {
+    const previous = process.env.GOOGLE_API_KEY;
+    const savedEntries: Record<string, string> = {};
+    const validated: string[] = [];
+    const setup = {
+      needsSetup: async () => true,
+      save: (e: Record<string, string>) => Object.assign(savedEntries, e),
+      validate: async (spec: string) => {
+        validated.push(spec);
+      },
+    };
+    const { lastFrame, stdin, unmount } = render(<App cwd="/tmp" policy={DEFAULT_POLICY} setup={setup} />);
+    await tick(50);
+    stdin.write("3"); // Google AI
+    await tick(50);
+    expect(lastFrame()).toContain("GOOGLE_API_KEY");
+
+    stdin.write("google-test-123456789");
+    await tick(30);
+    expect(lastFrame()).not.toContain("google-test-123456789");
+    stdin.write("\r");
+    await tick(80);
+
+    expect(validated).toEqual(["google:gemini-3.5-flash"]);
+    expect(savedEntries).toMatchObject({
+      GOOGLE_API_KEY: "google-test-123456789",
+      COBLE_MODEL: "google:gemini-3.5-flash",
+    });
+    if (previous === undefined) delete process.env.GOOGLE_API_KEY;
+    else process.env.GOOGLE_API_KEY = previous;
+    unmount();
+  });
+
   it("first run: failed validation shows the error and allows retry", async () => {
     let calls = 0;
     const setup = {
@@ -195,7 +228,7 @@ describe("App", () => {
 // The TUI tests above exercise the seams with fakes; this block covers the
 // real default implementations (resolution, validation, persistence).
 describe("defaultSetupDeps", () => {
-  const TOUCHED = ["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "COBLE_MODEL", "COBLE_HOME", "ONBOARD_TEST_KEY"] as const;
+  const TOUCHED = ["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GOOGLE_API_KEY", "COBLE_MODEL", "COBLE_HOME", "ONBOARD_TEST_KEY"] as const;
   const saved: Record<string, string | undefined> = {};
   let home: string;
 
