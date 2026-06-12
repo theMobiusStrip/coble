@@ -44,7 +44,19 @@ describe("App", () => {
     const { lastFrame, unmount } = render(<App cwd="/tmp" policy={DEFAULT_POLICY} setup={noSetup} />);
     await tick();
     expect(lastFrame()).toContain("coble");
-    expect(lastFrame()).toContain(">");
+    expect(lastFrame()).toContain("›"); // bordered input prompt
+    unmount();
+  });
+
+  it("shows the resolved configured model before first submit", async () => {
+    const resolver = async () => ({ model: {} as never, label: "fake:model" });
+    const { lastFrame, unmount } = render(
+      <App cwd="/tmp" policy={DEFAULT_POLICY} resolver={resolver} setup={noSetup} />,
+    );
+    await tick(50);
+    const frame = lastFrame() ?? "";
+    expect(frame).toContain("fake:model");
+    expect(frame).not.toContain("no model");
     unmount();
   });
 
@@ -59,9 +71,11 @@ describe("App", () => {
     stdin.write("\r");
     await tick(100);
     const frame = lastFrame() ?? "";
-    expect(frame).toContain("⚙ bash(ls)");
+    expect(frame).toContain("Bash(ls)"); // tool tree, prettified name
+    expect(frame).toContain("x.txt"); // tool result under ⎿
     expect(frame).toContain("All done.");
-    expect(frame).toContain("— done: 2 step(s)");
+    expect(frame).toContain("fake:model"); // status bar
+    expect(frame).toContain("15 tok"); // accumulated usage (10 in + 5 out)
     unmount();
   });
 
@@ -76,12 +90,14 @@ describe("App", () => {
     stdin.write("\r");
     await tick(80);
     expect(lastFrame() ?? "").toContain("approval required");
-    expect(lastFrame() ?? "").toContain("[dangerous] bash(rm -rf x)");
+    expect(lastFrame() ?? "").toContain("dangerous");
+    expect(lastFrame() ?? "").toContain("Bash(rm -rf x)");
 
     stdin.write("n"); // deny
     await tick(80);
     const frame = lastFrame() ?? "";
     expect(frame).toContain("✗ denied");
+    expect(frame).toContain("user denied approval");
     expect(frame).toContain("kept it safe");
     unmount();
   });
@@ -133,7 +149,8 @@ describe("App", () => {
     expect(savedEntries).toMatchObject({ OPENAI_API_KEY: "sk-test-123456789", COBLE_MODEL: "openai:gpt-5.5" });
     const frame = lastFrame() ?? "";
     expect(frame).toContain("saved globally");
-    expect(frame).toContain(">"); // back to the normal input
+    expect(frame).toContain("openai:gpt-5.5");
+    expect(frame).toContain("›"); // back to the normal input
     unmount();
   });
 
