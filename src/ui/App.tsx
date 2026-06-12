@@ -45,11 +45,14 @@ export type SetupDeps = typeof defaultSetupDeps;
 
 type ToolStatus = "running" | "ok" | "fail" | "denied";
 
+/** How much of the tool trail to render. tab cycles hidden → collapsed → full. */
+type ToolDetail = "hidden" | "collapsed" | "full";
+
 type Item =
   | { kind: "user"; text: string }
   | { kind: "assistant"; text: string }
   | { kind: "tool"; name: string; input: string; tier: string; status: ToolStatus; result?: string; ms?: number }
-  | { kind: "info"; text: string }
+  | { kind: "info"; text: string; toolNoise?: boolean }
   | { kind: "error"; text: string };
 
 export interface AppProps {
@@ -78,15 +81,34 @@ function resolveTool(items: Item[], patch: Partial<Extract<Item, { kind: "tool" 
   return undefined;
 }
 
-function ToolView({ item }: { item: Extract<Item, { kind: "tool" }> }) {
+/** Collapsed view of a command/input: first line only, hard-capped width. */
+function compactInput(input: string, full: boolean): string {
+  if (full) return input;
+  const nl = input.indexOf("\n");
+  const first = (nl === -1 ? input : input.slice(0, nl)).trimEnd();
+  const truncated = nl !== -1 || first.length > 100;
+  return truncated ? `${first.slice(0, 100)} …` : first;
+}
+
+function ToolView({ item, detail }: { item: Extract<Item, { kind: "tool" }>; detail: ToolDetail }) {
+  const full = detail === "full";
   const dotColor =
     item.status === "ok" ? "green" : item.status === "running" ? "yellow" : "red";
-  const lines = item.result !== undefined ? previewLines(item.result) : [];
+  const result = (item.result ?? "").replace(/\s+$/, "");
+  const resultLines = result.length === 0 ? [] : result.split("\n");
+  // Collapsed (default): successful multi-line output shrinks to a count.
+  // Failures always show their preview — errors are signal, not noise.
+  const collapsed = !full && item.status === "ok" && resultLines.length > 1;
+  const lines = collapsed
+    ? [`${resultLines.length} lines (tab to expand)`]
+    : item.result !== undefined
+      ? previewLines(item.result, full ? 24 : 4)
+      : [];
   return (
     <Box flexDirection="column">
       <Text>
         <Text color={dotColor}>⏺</Text> <Text bold>{toolLabel(item.name)}</Text>
-        <Text dimColor>({item.input})</Text>
+        <Text dimColor>({compactInput(item.input, full)})</Text>
       </Text>
       {item.status === "running" ? (
         <Text dimColor>
@@ -107,7 +129,7 @@ function ToolView({ item }: { item: Extract<Item, { kind: "tool" }> }) {
   );
 }
 
-function MessageView({ item }: { item: Item }) {
+function MessageView({ item, detail }: { item: Item; detail: ToolDetail }) {
   switch (item.kind) {
     case "user":
       return <Text color="green">{`› ${item.text}`}</Text>;
@@ -118,12 +140,24 @@ function MessageView({ item }: { item: Item }) {
         </Text>
       );
     case "tool":
-      return <ToolView item={item} />;
+      return <ToolView item={item} detail={detail} />;
     case "error":
       return <Text color="red">{`✗ ${item.text}`}</Text>;
     case "info":
       return <Text dimColor>{item.text}</Text>;
   }
+}
+
+/**
+ * Hidden mode keeps the conversation clean: finished tools and auto-approval
+ * noise drop out; still-running tools (live activity) and denied calls
+ * (a safety signal) stay visible.
+ */
+function isVisible(item: Item, detail: ToolDetail): boolean {
+  if (detail !== "hidden") return true;
+  if (item.kind === "tool") return item.status === "running" || item.status === "denied";
+  if (item.kind === "info" && item.toolNoise) return false;
+  return true;
 }
 
 export function App({ cwd, policy, modelSpec, initialPrompt, engine, resolver, setup }: AppProps) {
@@ -136,8 +170,13 @@ export function App({ cwd, policy, modelSpec, initialPrompt, engine, resolver, s
   const [setupState, setSetupState] = useState<"checking" | "needed" | "done">("checking");
   const [usage, setUsage] = useState<TokenUsage>({ inputTokens: 0, outputTokens: 0 });
   const [modelLabel, setModelLabel] = useState<string | undefined>(modelSpec);
+  const [detail, setDetail] = useState<ToolDetail>("hidden");
+  const [autoApprove, setAutoApprove] = useState(false);
   const modelRef = useRef<ResolvedModel | null>(null);
   const approvalResolver = useRef<((decisions: Record<string, boolean>) => void) | null>(null);
+  // Ref mirror of autoApprove: onApproval is a stable callback and must see the
+  // current value, not the one captured at creation.
+  const autoApproveRef = useRef(false);
   const setupDeps: SetupDeps = { ...defaultSetupDeps, ...setup };
 
   const append = useCallback((item: Item) => {
@@ -175,26 +214,40 @@ export function App({ cwd, policy, modelSpec, initialPrompt, engine, resolver, s
     // eslint-disable-next-line react-hooks/exhaustive-deps -- run once on mount
   }, []);
 
-  // Bridge the engine's onApproval promise to a y/N keypress.
+  // Bridge the engine's onApproval promise to a y/a/N keypress. Once
+  // approve-all is on, every later batch resolves instantly — the interactive
+  // twin of --dangerously-allow, scoped to this session and opted into
+  // explicitly. Each call still renders in the tool tree and the audit log.
   const onApproval = useCallback(
-    (calls: PendingCall[]) =>
-      new Promise<Record<string, boolean>>((resolve) => {
+    (calls: PendingCall[]) => {
+      if (autoApproveRef.current) {
+        append({ kind: "info", toolNoise: true, text: `✓ auto-approved: ${calls.map((c) => toolLabel(c.name)).join(", ")}` });
+        return Promise.resolve(Object.fromEntries(calls.map((c) => [c.id, true])));
+      }
+      return new Promise<Record<string, boolean>>((resolve) => {
         setApproval(calls);
         approvalResolver.current = resolve;
-      }),
-    [],
+      });
+    },
+    [append],
   );
 
   const decide = useCallback(
-    (approved: boolean) => {
+    (approved: boolean, all = false) => {
       const calls = approval;
       const resolver = approvalResolver.current;
       if (calls === null || resolver === null) return;
       setApproval(null);
       approvalResolver.current = null;
+      if (all) {
+        autoApproveRef.current = true;
+        setAutoApprove(true);
+      }
       append({
         kind: "info",
-        text: `${approved ? "✓ approved" : "✗ denied"}: ${calls.map((c) => toolLabel(c.name)).join(", ")}`,
+        text: approved
+          ? `✓ approved: ${calls.map((c) => toolLabel(c.name)).join(", ")}${all ? " — auto-approving the rest of this session" : ""}`
+          : `✗ denied: ${calls.map((c) => toolLabel(c.name)).join(", ")}`,
       });
       resolver(Object.fromEntries(calls.map((c) => [c.id, approved])));
     },
@@ -204,11 +257,21 @@ export function App({ cwd, policy, modelSpec, initialPrompt, engine, resolver, s
   useInput(
     (inputChar) => {
       if (approval === null) return;
-      if (inputChar.toLowerCase() === "y") decide(true);
-      else if (inputChar.toLowerCase() === "n") decide(false);
+      const ch = inputChar.toLowerCase();
+      if (ch === "y") decide(true);
+      else if (ch === "a") decide(true, true);
+      else if (ch === "n") decide(false);
     },
     { isActive: approval !== null },
   );
+
+  // tab cycles the tool trail: hidden → collapsed → full. tab (not ctrl+o)
+  // because ink-text-input filters tab but would insert a literal "o" on ctrl+o.
+  useInput((_ch, key) => {
+    if (key.tab) {
+      setDetail((d) => (d === "hidden" ? "collapsed" : d === "collapsed" ? "full" : "hidden"));
+    }
+  });
 
   const submit = useCallback(
     async (raw: string) => {
@@ -317,9 +380,9 @@ export function App({ cwd, policy, modelSpec, initialPrompt, engine, resolver, s
   return (
     <Box flexDirection="column" paddingX={1}>
       <Banner cwd={cwd} model={modelLabel} />
-      {items.map((item, i) => (
+      {items.filter((item) => isVisible(item, detail)).map((item, i) => (
         <Box key={i} marginBottom={item.kind === "tool" || item.kind === "assistant" ? 1 : 0}>
-          <MessageView item={item} />
+          <MessageView item={item} detail={detail} />
         </Box>
       ))}
       {streamText.length > 0 ? (
@@ -339,7 +402,8 @@ export function App({ cwd, policy, modelSpec, initialPrompt, engine, resolver, s
             </Text>
           ))}
           <Text>
-            approve? <Text color="green">y</Text> {"/"} <Text color="red">n</Text>
+            <Text color="green">y</Text> approve · <Text color="green">a</Text> approve all (rest of session) ·{" "}
+            <Text color="red">n</Text> deny
           </Text>
         </Box>
       ) : busy ? (
@@ -352,7 +416,7 @@ export function App({ cwd, policy, modelSpec, initialPrompt, engine, resolver, s
           <TextInput value={input} onChange={setInput} onSubmit={(v) => void submit(v)} placeholder="task…" />
         </Box>
       )}
-      <StatusBar model={model} usage={usage} />
+      <StatusBar model={model} usage={usage} autoApprove={autoApprove} toolDetail={detail} />
     </Box>
   );
 }

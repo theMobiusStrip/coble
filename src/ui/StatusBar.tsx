@@ -6,6 +6,8 @@ import { shortModel } from "./theme.js";
 export interface StatusBarProps {
   model: string;
   usage: TokenUsage;
+  autoApprove?: boolean;
+  toolDetail?: string;
 }
 
 function tokens(n: number): string {
@@ -13,10 +15,12 @@ function tokens(n: number): string {
 }
 
 /** Dim one-line footer: model · token total · estimated cost. */
-export function StatusBar({ model, usage }: StatusBarProps) {
+export function StatusBar({ model, usage, autoApprove, toolDetail }: StatusBarProps) {
   const total = usage.inputTokens + usage.outputTokens;
   const cost = estimateCostUsd(model, usage);
   const parts = [shortModel(model), `${tokens(total)} tok`];
   if (cost !== undefined && cost > 0) parts.push(`~$${cost.toFixed(4)}`);
+  if (autoApprove) parts.push("auto-approve");
+  if (toolDetail) parts.push(`tools: ${toolDetail}`);
   return <Text dimColor>{` ${parts.join(" · ")}`}</Text>;
 }
