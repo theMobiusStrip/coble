@@ -23,7 +23,7 @@ export interface OnboardingProps {
   save: (entries: Record<string, string>) => void;
   /** Throw to reject the key (e.g. live ping failed). */
   validate: (spec: string) => Promise<void>;
-  onDone: (note: string) => void;
+  onDone: (note: string, model?: string) => void;
   onSkip: () => void;
 }
 
@@ -54,7 +54,7 @@ export function Onboarding({ save, validate, onDone, onSkip }: OnboardingProps) 
         setStep("key");
       } else if (ch === "3") {
         save({ COBLE_MODEL: "ollama:llama3.1" });
-        onDone("default model set to ollama:llama3.1 — make sure `ollama pull llama3.1` has run.");
+        onDone("default model set to ollama:llama3.1 — make sure `ollama pull llama3.1` has run.", "ollama:llama3.1");
       } else if (ch === "q" || ink.escape) {
         onSkip();
       }
@@ -73,7 +73,7 @@ export function Onboarding({ save, validate, onDone, onSkip }: OnboardingProps) 
     try {
       await validate(spec);
       save({ [key]: value, COBLE_MODEL: spec });
-      onDone(`${key} saved globally — default model ${spec}.`);
+      onDone(`${key} saved globally — default model ${spec}.`, spec);
     } catch (err) {
       if (previous === undefined) delete process.env[key];
       else process.env[key] = previous;
