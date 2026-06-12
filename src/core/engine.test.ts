@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -24,6 +24,43 @@ async function collect(events: AsyncIterable<AgentEvent>): Promise<AgentEvent[]>
 }
 
 describe("runAgent end-to-end (scripted model)", () => {
+  it("answers bare greetings without calling tools", async () => {
+    const model = new ScriptedChatModel([
+      { toolCalls: [{ name: "bash", args: { command: "find . -maxdepth 2" } }] },
+    ]);
+
+    const events = await collect(runAgent({ prompt: "hello", cwd, model, policy: DEFAULT_POLICY }));
+
+    expect(events.some((e) => e.type === "tool_start" || e.type === "tool_end" || e.type === "tool_denied")).toBe(false);
+    expect(events.some((e) => e.type === "model_end" && e.text.includes("What would you like to work on"))).toBe(true);
+    const final = events.at(-1);
+    expect(final?.type).toBe("final");
+    if (final?.type === "final") {
+      expect(final.steps).toBe(0);
+      expect(final.usage).toEqual({ inputTokens: 0, outputTokens: 0 });
+    }
+  });
+
+  it("does NOT keyword-intercept workspace tasks that mention 'latest' or 'news'", async () => {
+    // Regression: a task about a workspace file is a normal task no matter
+    // which words it uses. It must reach the model (which here reads the
+    // file), not get a canned refusal from prompt-text matching.
+    await writeFile(path.join(cwd, "news.md"), "# team news\n- 2026-01-01: shipped v1\n", "utf8");
+    const model = new ScriptedChatModel([
+      { toolCalls: [{ name: "read_file", args: { path: "news.md" } }] },
+      { content: "The latest item is 2026-01-01: shipped v1." },
+    ]);
+
+    const events = await collect(
+      runAgent({ prompt: "summarize the latest news in news.md", cwd, model, policy: DEFAULT_POLICY }),
+    );
+
+    expect(events.some((e) => e.type === "tool_start" && e.name === "read_file")).toBe(true);
+    const final = events.at(-1);
+    expect(final?.type).toBe("final");
+    if (final?.type === "final") expect(final.text).toContain("2026-01-01");
+  });
+
   it("executes a write → verify → summarize task", async () => {
     const model = new ScriptedChatModel([
       {

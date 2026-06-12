@@ -43,6 +43,25 @@ function extractApproval(out: unknown): { calls: PendingCall[] } | undefined {
 }
 
 /**
+ * Bare greetings get an instant reply without an API round-trip — exact
+ * normalized match only. Topic routing deliberately does NOT live here:
+ * prompt-text matching can't tell a question that needs live external data
+ * from a workspace task that happens to use the same words, so every other
+ * input goes to the model.
+ */
+function quickDirectResponse(prompt: string | undefined): string | undefined {
+  const normalized = (prompt ?? "")
+    .trim()
+    .toLowerCase()
+    .replace(/[.!?。！？]+$/u, "")
+    .replace(/\s+/g, " ");
+  const greetings = new Set(["hi", "hello", "hey", "hi there", "hello there", "hey there", "你好", "您好", "嗨", "哈喽"]);
+  if (greetings.has(normalized)) return "Hi. What would you like to work on?";
+
+  return undefined;
+}
+
+/**
  * Run one agent task, yielding UI-agnostic events. The graph executes in the
  * background; on each interrupt (approval pause) we surface the pending calls,
  * await the handler's decision, and resume with a Command — looping until the
@@ -78,6 +97,15 @@ export function runAgent(opts: EngineOptions): AsyncIterable<AgentEvent> {
 
   void (async () => {
     try {
+      const quick = opts.resume ? undefined : quickDirectResponse(opts.prompt);
+      if (quick !== undefined) {
+        emit({ type: "token", text: quick });
+        emit({ type: "model_end", text: quick, toolCallCount: 0, usage: { inputTokens: 0, outputTokens: 0 } });
+        queue.push({ type: "final", text: quick, steps: 0, usage: { inputTokens: 0, outputTokens: 0 } });
+        queue.close();
+        return;
+      }
+
       let input: unknown = opts.resume ? null : { messages: [new HumanMessage(opts.prompt ?? "")] };
       let out = await app.invoke(input as never, config);
 
