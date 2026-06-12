@@ -11,7 +11,13 @@ function defaultSpec(): string {
   if (process.env.ANTHROPIC_API_KEY) return "anthropic:claude-sonnet-4-6";
   if (process.env.OPENAI_API_KEY) return "openai:gpt-5.5";
   throw new Error(
-    "no model configured — set ANTHROPIC_API_KEY or OPENAI_API_KEY, set COBLE_MODEL, or pass -m provider:model (e.g. -m ollama:llama3.1)",
+    [
+      "no model configured. Fix with one of:",
+      "  coble config set OPENAI_API_KEY <key>       # get one: https://platform.openai.com/api-keys",
+      "  coble config set ANTHROPIC_API_KEY <key>    # get one: https://console.anthropic.com/settings/keys",
+      '  coble -m ollama:llama3.1 "<task>"           # local & free — https://ollama.com',
+      "or export the key in your shell, or pin a default: coble config set COBLE_MODEL provider:model",
+    ].join("\n"),
   );
 }
 
@@ -40,7 +46,12 @@ export async function resolveModel(spec?: string): Promise<ResolvedModel> {
     case "ollama": {
       const { ChatOllama } = await import("@langchain/ollama");
       const model = name || "llama3.1";
-      return { model: new ChatOllama({ model }), label: `ollama:${model}` };
+      // Honor OLLAMA_HOST (same variable the ollama CLI uses) for remote/Docker setups.
+      const baseUrl = process.env.OLLAMA_HOST;
+      return {
+        model: new ChatOllama({ model, ...(baseUrl ? { baseUrl } : {}) }),
+        label: `ollama:${model}`,
+      };
     }
     case "scripted": {
       if (!name) throw new Error("scripted model needs a script file: -m scripted:path/to/script.json");

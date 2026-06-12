@@ -24,3 +24,8 @@ export function sessionsPath(): string {
 export function auditLogPath(): string {
   return path.join(ensureHome(), "audit.jsonl");
 }
+
+/** Global config file (dotenv format). Read lazily — do not create on read. */
+export function globalEnvPath(): string {
+  return path.join(cobleHome(), "env");
+}
