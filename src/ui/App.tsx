@@ -1,14 +1,45 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Box, Text, useApp, useInput } from "ink";
 import TextInput from "ink-text-input";
 import Spinner from "ink-spinner";
+import { HumanMessage } from "@langchain/core/messages";
 import type { ApprovalPolicy } from "../core/approval.js";
+import { setGlobalConfig } from "../core/config.js";
 import { formatUsage } from "../core/cost.js";
 import { runAgent, type EngineOptions } from "../core/engine.js";
 import type { AgentEvent, PendingCall } from "../core/events.js";
 import { resolveModel, type ResolvedModel } from "../core/models.js";
+import { Onboarding } from "./Onboarding.js";
 
 export type EngineFn = (opts: EngineOptions) => AsyncIterable<AgentEvent>;
+
+/** Default first-run helpers; injectable in tests. */
+export const defaultSetupDeps = {
+  /** true ⇒ show onboarding (no model resolvable and none explicitly chosen). */
+  async needsSetup(modelSpec?: string): Promise<boolean> {
+    if (modelSpec !== undefined) return false;
+    try {
+      await resolveModel(undefined);
+      return false;
+    } catch {
+      return true;
+    }
+  },
+  save(entries: Record<string, string>): void {
+    for (const [k, v] of Object.entries(entries)) {
+      setGlobalConfig(k, v);
+      process.env[k] = v;
+    }
+  },
+  async validate(spec: string): Promise<void> {
+    const { model } = await resolveModel(spec);
+    await model.invoke([new HumanMessage("Reply with exactly: ok")], {
+      signal: AbortSignal.timeout(20_000),
+    });
+  },
+};
+
+export type SetupDeps = typeof defaultSetupDeps;
 
 interface Line {
   kind: "user" | "assistant" | "tool" | "denied" | "info" | "error";
@@ -23,22 +54,36 @@ export interface AppProps {
   /** Dependency injection for tests. */
   engine?: EngineFn;
   resolver?: (spec?: string) => Promise<ResolvedModel>;
+  setup?: Partial<SetupDeps>;
 }
 
 const MAX_LINES = 500;
 
-export function App({ cwd, policy, modelSpec, initialPrompt, engine, resolver }: AppProps) {
+export function App({ cwd, policy, modelSpec, initialPrompt, engine, resolver, setup }: AppProps) {
   const { exit } = useApp();
   const [input, setInput] = useState(initialPrompt ?? "");
   const [lines, setLines] = useState<Line[]>([]);
   const [streamText, setStreamText] = useState("");
   const [busy, setBusy] = useState(false);
   const [approval, setApproval] = useState<PendingCall[] | null>(null);
+  const [setupState, setSetupState] = useState<"checking" | "needed" | "done">("checking");
   const modelRef = useRef<ResolvedModel | null>(null);
   const approvalResolver = useRef<((decisions: Record<string, boolean>) => void) | null>(null);
+  const setupDeps: SetupDeps = { ...defaultSetupDeps, ...setup };
 
   const append = useCallback((line: Line) => {
     setLines((prev) => [...prev.slice(-MAX_LINES), line]);
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void setupDeps.needsSetup(modelSpec).then((needed) => {
+      if (!cancelled) setSetupState(needed ? "needed" : "done");
+    });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- run once on mount
   }, []);
 
   // Bridge the engine's onApproval promise to a y/N keypress.
@@ -139,6 +184,35 @@ export function App({ cwd, policy, modelSpec, initialPrompt, engine, resolver }:
     },
     [append, busy, cwd, engine, exit, modelSpec, onApproval, policy, resolver],
   );
+
+  if (setupState !== "done") {
+    return (
+      <Box flexDirection="column" paddingX={1}>
+        <Text bold color="cyan">
+          ⛵ coble
+        </Text>
+        {setupState === "checking" ? (
+          <Text dimColor>checking configuration…</Text>
+        ) : (
+          <Onboarding
+            save={setupDeps.save}
+            validate={setupDeps.validate}
+            onDone={(note) => {
+              append({ kind: "info", text: `✓ ${note}` });
+              setSetupState("done");
+            }}
+            onSkip={() => {
+              append({
+                kind: "info",
+                text: "setup skipped — configure later with `coble config set OPENAI_API_KEY <key>` or pass -m.",
+              });
+              setSetupState("done");
+            }}
+          />
+        )}
+      </Box>
+    );
+  }
 
   return (
     <Box flexDirection="column" paddingX={1}>

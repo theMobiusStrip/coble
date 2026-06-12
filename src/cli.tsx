@@ -1,16 +1,22 @@
 #!/usr/bin/env node
-import { existsSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Command } from "commander";
 import { render } from "ink";
-
-// Load a local .env (if present) before resolving any model/keys. Native to Node ≥20.6.
-for (const envPath of [path.join(process.cwd(), ".env")]) {
-  if (existsSync(envPath)) process.loadEnvFile(envPath);
-}
 import type { ApprovalPolicy } from "./core/approval.js";
 import { openAuditLog } from "./core/audit.js";
+import {
+  KNOWN_KEYS,
+  loadLayeredEnv,
+  maskValue,
+  readEnvFile,
+  setGlobalConfig,
+  unsetGlobalConfig,
+} from "./core/config.js";
+
+// Config precedence: shell env > <cwd>/.env > ~/.coble/env (see core/config.ts).
+loadLayeredEnv();
 import { openCheckpointer } from "./core/checkpointer.js";
 import { formatUsage } from "./core/cost.js";
 import { runAgent } from "./core/engine.js";
@@ -18,8 +24,9 @@ import { resolveModel } from "./core/models.js";
 import { REVIEW_PROMPT } from "./core/prompts.js";
 import { observeSession } from "./core/sessionRunner.js";
 import { openSessionStore } from "./core/sessions.js";
-import { auditLogPath } from "./core/store.js";
+import { auditLogPath, globalEnvPath } from "./core/store.js";
 import { makeGitTools } from "./core/tools/gitTools.js";
+import { renderDoctor, runDoctor } from "./doctor.js";
 import { loadTasks } from "./eval/load.js";
 import { renderConsole, renderMarkdown } from "./eval/report.js";
 import { runAll, scriptedModelFor, type ModelForTask } from "./eval/run.js";
@@ -151,6 +158,88 @@ program
   });
 
 program
+  .command("doctor")
+  .description("check your setup: node, state dir, keys, model, connectivity, git/gh")
+  .option("--no-ping", "skip live network checks (provider ping, ollama)")
+  .action(async (opts: { ping: boolean }) => {
+    const { results, exitCode } = await runDoctor({ ping: opts.ping });
+    console.log(renderDoctor(results));
+    if (exitCode !== 0) {
+      console.log("\n\x1b[31msome checks failed\x1b[0m — fix the ✗ items above and re-run.");
+    }
+    process.exitCode = exitCode;
+  });
+
+const config = program
+  .command("config")
+  .description("manage global config at ~/.coble/env (keys, default model)");
+
+config
+  .command("set <key> <value>")
+  .description("save a key, e.g. coble config set OPENAI_API_KEY sk-...")
+  .action((key: string, value: string) => {
+    if (key === "COBLE_HOME") {
+      console.error(
+        "COBLE_HOME can't live in the global config — the config file is located *via* COBLE_HOME.\n" +
+          "set it in your shell instead: export COBLE_HOME=/path/to/state",
+      );
+      process.exitCode = 1;
+      return;
+    }
+    setGlobalConfig(key, value);
+    if (!(KNOWN_KEYS as readonly string[]).includes(key)) {
+      console.log(`note: "${key}" is not a key coble reads itself; saving anyway.`);
+    }
+    console.log(`saved ${key}=${maskValue(value)} → ${globalEnvPath()}`);
+    console.log("effective for every coble run, in any directory.");
+  });
+
+config
+  .command("get <key>")
+  .description("show one value (masked unless --reveal)")
+  .option("--reveal", "print the raw value")
+  .action((key: string, opts: { reveal?: boolean }) => {
+    const vars = readEnvFile(globalEnvPath());
+    const value = vars[key];
+    if (value === undefined) {
+      console.log(`${key} is not set in ${globalEnvPath()}`);
+      process.exitCode = 1;
+      return;
+    }
+    console.log(opts.reveal ? value : maskValue(value));
+  });
+
+config
+  .command("list")
+  .description("show all saved keys (values masked unless --reveal)")
+  .option("--reveal", "print raw values")
+  .action((opts: { reveal?: boolean }) => {
+    const vars = readEnvFile(globalEnvPath());
+    const entries = Object.entries(vars);
+    if (entries.length === 0) {
+      console.log(`no config yet — try: coble config set OPENAI_API_KEY <key>`);
+      return;
+    }
+    for (const [k, v] of entries) console.log(`${k}=${opts.reveal ? v : maskValue(v)}`);
+  });
+
+config
+  .command("unset <key>")
+  .description("remove a key from the global config")
+  .action((key: string) => {
+    const removed = unsetGlobalConfig(key);
+    console.log(removed ? `removed ${key}` : `${key} was not set`);
+    if (!removed) process.exitCode = 1;
+  });
+
+config
+  .command("path")
+  .description("print the global config file path")
+  .action(() => {
+    console.log(globalEnvPath());
+  });
+
+program
   .command("audit")
   .description("show the tool-call audit log")
   .option("-n, --tail <count>", "show only the last N entries", (v) => Number.parseInt(v, 10))
@@ -198,4 +287,9 @@ program
     process.exitCode = await renderPrint(events, { modelLabel: label, formatUsage: (u) => formatUsage(label, u) });
   });
 
-await program.parseAsync();
+try {
+  await program.parseAsync();
+} catch (err) {
+  console.error(`\x1b[31m${err instanceof Error ? err.message : String(err)}\x1b[0m`);
+  process.exitCode = 1;
+}
