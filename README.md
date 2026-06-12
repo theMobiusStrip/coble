@@ -4,9 +4,7 @@
 [![evals](https://img.shields.io/badge/evals-16%2F16_scripted_%C2%B7_16%2F16_gpt--5.5-brightgreen)](./evals/RESULTS.md)
 [![node](https://img.shields.io/badge/node-%E2%89%A522-339933?logo=node.js&logoColor=white)](./package.json)
 [![license](https://img.shields.io/badge/license-MIT-blue)](./LICENSE)
-<!-- after npm publish, add:
-[![npm](https://img.shields.io/npm/v/coble)](https://www.npmjs.com/package/coble)
--->
+[![npm](https://img.shields.io/npm/v/@themobiusstrip/coble)](https://www.npmjs.com/package/@themobiusstrip/coble)
 
 A **local, provider-agnostic agent CLI** built on [LangGraph.js](https://github.com/langchain-ai/langgraphjs) and [Ink](https://github.com/vadimdemedes/ink).
 
@@ -21,11 +19,8 @@ coble is a small coding agent you run in your own terminal. The point isn't to o
 ## Quickstart
 
 ```bash
-# 1. install — from source until the npm package ships
-git clone https://github.com/theMobiusStrip/coble.git && cd coble
-nvm install && nvm use                       # Node 22, from .nvmrc
-npm install && npm run build && npm link     # puts `coble` on your PATH
-# (once published, this becomes: npm install -g coble)
+# 1. install
+npm install -g @themobiusstrip/coble
 
 # 2. save a key once — effective from any directory afterwards
 coble config set OPENAI_API_KEY sk-...       # or ANTHROPIC_API_KEY sk-ant-...
