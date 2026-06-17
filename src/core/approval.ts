@@ -22,11 +22,13 @@ export function tierExceeds(tier: DangerTier, policy: ApprovalPolicy): boolean {
   return TIER_ORDER[tier] > TIER_ORDER[policy.autoTier];
 }
 
-/** Binaries that are safe to run without approval (read-only, no side effects). */
+/** Binaries that are safe to run without approval (read-only, no side effects).
+ *  `env` is deliberately ABSENT: `env <cmd>` executes <cmd>, so allowlisting it
+ *  would downgrade any command to "safe" (the env-prefix bypass). */
 const SAFE_BINARIES = new Set([
   "ls", "cat", "head", "tail", "wc", "grep", "rg", "echo", "pwd", "stat",
   "file", "du", "df", "sort", "uniq", "cut", "tr", "which", "date",
-  "basename", "dirname", "true", "false", "env", "uname", "find", "diff",
+  "basename", "dirname", "true", "false", "uname", "find", "diff",
 ]);
 
 const SAFE_GIT_SUBCOMMANDS = new Set([
@@ -35,12 +37,73 @@ const SAFE_GIT_SUBCOMMANDS = new Set([
 ]);
 
 /** Anything that lets `find` mutate or execute is not read-only. */
-const FIND_MUTATING = /-(delete|exec|execdir|ok|okdir)\b/;
+const FIND_MUTATING = /-(delete|exec|execdir|ok|okdir|fprint|fprintf|fls|fprint0)\b/;
+
+/**
+ * Per-binary flags that turn an otherwise read-only binary into one that writes
+ * a file, runs another program, or mutates state (argument injection). Matched
+ * against each argument token; short clusters like `-bo` are caught by the
+ * `-[a-z]*<letter>` form.
+ */
+const DANGEROUS_FLAGS: Record<string, RegExp> = {
+  // `sort -o FILE` / `--output=FILE` writes a file; `--compress-program=PROG`
+  // runs PROG to (de)compress spill files (arbitrary exec on GNU sort).
+  sort: /^(--output(=|$)|--compress-program(=|$)|-[a-z]*o)/,
+  // `date -s` / `--set` changes the system clock.
+  date: /^(--set(=|$)|-[a-z]*s)/,
+  // ripgrep runs external programs: `--pre` (per-file preprocessor),
+  // `--hostname-bin`, and `-z`/`--search-zip` (external decompressors).
+  // `--pre-glob` only scopes `--pre`, so flagging `--pre` alone suffices.
+  rg: /^(--pre(=|$)|--hostname-bin(=|$)|--search-zip$|-[a-z]*z)/,
+};
+
+/**
+ * `uniq [opts] [input [output]]` writes its second positional operand — a write
+ * primitive no flag reveals. These value-taking flags consume the following
+ * token, so it isn't miscounted as that operand (`uniq -f 2 input` is read-only).
+ */
+const UNIQ_VALUE_FLAGS = new Set([
+  "-f", "-s", "-w", "--skip-fields", "--skip-chars", "--check-chars",
+]);
+
+/** Count positional operands, treating `-` as the stdin operand and skipping
+ *  the value token after a separate-value flag. Everything after `--` is an
+ *  operand. */
+function countOperands(rest: string[], valueFlags: Set<string>): number {
+  let operands = 0;
+  let afterDoubleDash = false;
+  for (let i = 0; i < rest.length; i += 1) {
+    const w = rest[i] ?? "";
+    if (afterDoubleDash) {
+      operands += 1;
+      continue;
+    }
+    if (w === "--") {
+      afterDoubleDash = true;
+      continue;
+    }
+    if (w === "-") {
+      operands += 1; // stdin operand
+      continue;
+    }
+    if (w.startsWith("-")) {
+      if (valueFlags.has(w)) i += 1; // its value is the next token, not an operand
+      continue;
+    }
+    operands += 1;
+  }
+  return operands;
+}
 
 /**
  * Classify a shell command line. Conservative by design: anything we cannot
  * positively identify as read-only is "dangerous". Output redirection makes
  * any command mutating.
+ *
+ * IMPORTANT: this is defense-in-depth (it decides whether to ask the human),
+ * NOT a security boundary. Allowlist-parsing of shell strings cannot keep up
+ * with full shell semantics (`eval`, `xargs`, quoting, locale tricks); the OS
+ * sandbox (sandbox.ts) is the layer that actually confines what runs.
  */
 export function classifyBash(command: string): DangerTier {
   const trimmed = command.trim();
@@ -48,8 +111,13 @@ export function classifyBash(command: string): DangerTier {
   if (/[<>]/.test(trimmed)) return "dangerous";
   if (/\$\(|`/.test(trimmed)) return "dangerous";
 
-  // Split on connectors so every segment of a compound command is vetted.
-  const segments = trimmed.split(/&&|\|\||[;|]/).map((s) => s.trim()).filter(Boolean);
+  // Split on every connector the shell treats as a command boundary, so each
+  // segment of a compound command is vetted independently. This includes
+  // newlines and a single `&` (backgrounding) — both are shell separators the
+  // old splitter missed, which let `ls\nrm -rf x` and `ls & rm x` smuggle a
+  // mutating command into the "args" of a safe one. `&&` and `||` are matched
+  // before the single-char `&`/`|` so they are not mis-split.
+  const segments = trimmed.split(/&&|\|\||[;|&\n\r]/).map((s) => s.trim()).filter(Boolean);
   if (segments.length === 0) return "dangerous";
 
   for (const segment of segments) {
@@ -72,6 +140,9 @@ export function classifyBash(command: string): DangerTier {
       continue;
     }
     if (!SAFE_BINARIES.has(bin)) return "dangerous";
+    const dangerousFlag = DANGEROUS_FLAGS[bin];
+    if (dangerousFlag && rest.some((w) => dangerousFlag.test(w))) return "dangerous";
+    if (bin === "uniq" && countOperands(rest, UNIQ_VALUE_FLAGS) > 1) return "dangerous";
     if (bin === "find" && FIND_MUTATING.test(segment)) return "dangerous";
   }
   return "safe";
