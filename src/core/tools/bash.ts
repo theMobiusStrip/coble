@@ -13,13 +13,19 @@ export function capOutput(s: string, max = MAX_OUTPUT_CHARS): string {
 export function makeBashTool(ctx: ToolContext) {
   return tool(
     async ({ command, timeout_ms }: { command: string; timeout_ms?: number }) => {
-      const res = await execa(command, {
+      // When a sandbox is active, run the command inside the OS boundary and
+      // strip provider API keys from its environment. Passthrough otherwise.
+      const sandbox = ctx.sandbox;
+      const toRun = sandbox?.active ? await sandbox.wrap(command) : command;
+      const scrubbed = sandbox?.active ? sandbox.scrubEnv() : undefined;
+      const res = await execa(toRun, {
         shell: true,
         cwd: ctx.cwd,
         timeout: timeout_ms ?? DEFAULT_TIMEOUT_MS,
         reject: false,
         all: true,
         stripFinalNewline: false,
+        ...(scrubbed ? { env: scrubbed, extendEnv: false } : {}),
       });
       const out = capOutput(res.all ?? "");
       if (res.exitCode === 0) return out.length > 0 ? out : "(no output)";

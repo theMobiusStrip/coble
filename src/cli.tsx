@@ -22,6 +22,7 @@ import { formatUsage } from "./core/cost.js";
 import { runAgent } from "./core/engine.js";
 import { resolveModel } from "./core/models.js";
 import { REVIEW_PROMPT } from "./core/prompts.js";
+import { buildSandbox, type Sandbox } from "./core/sandbox.js";
 import { observeSession } from "./core/sessionRunner.js";
 import { openSessionStore } from "./core/sessions.js";
 import { auditLogPath, globalEnvPath } from "./core/store.js";
@@ -45,6 +46,32 @@ function policyFrom(opts: { dangerouslyAllow?: boolean; paranoid?: boolean }): A
   };
 }
 
+interface SandboxOpts {
+  sandbox?: boolean;
+  strictSandbox?: boolean;
+  allowDomain?: string[];
+}
+
+/** Build the OS sandbox from CLI flags. Off (no-op) unless --sandbox is set. */
+function sandboxFrom(opts: SandboxOpts, cwd: string): Promise<Sandbox> {
+  return buildSandbox({
+    cwd,
+    enabled: opts.sandbox === true || opts.strictSandbox === true,
+    strict: opts.strictSandbox === true,
+    allowDomains: opts.allowDomain,
+    onWarn: (m) => console.error(`\x1b[33m⚠ ${m}\x1b[0m`),
+  });
+}
+
+/** Append the sandbox flags shared by the run-capable commands. */
+const collectDomain = (v: string, acc: string[]): string[] => acc.concat(v);
+function withSandboxFlags(cmd: Command): Command {
+  return cmd
+    .option("--sandbox", "confine bash/git in an OS sandbox (fs jail + egress allowlist)")
+    .option("--strict-sandbox", "refuse to run if the sandbox is unavailable (implies --sandbox)")
+    .option("--allow-domain <host>", "permit a hostname under --sandbox (repeatable)", collectDomain, []);
+}
+
 const program = new Command();
 
 program
@@ -52,20 +79,22 @@ program
   .description("Local, provider-agnostic agent CLI — LangGraph.js core, Ink TUI")
   .version(VERSION);
 
-program
-  .argument("[prompt...]", "task for the agent")
-  .option("-p, --print", "non-interactive: run one task, print events, exit")
-  .option("-m, --model <spec>", "provider:name (openai:gpt-5.5 | anthropic:claude-sonnet-4-6 | google:gemini-3.5-flash | ollama:llama3.1 | scripted:file.json)")
-  .option("-C, --cwd <dir>", "workspace root", process.cwd())
-  .option("--dangerously-allow", "auto-approve dangerous tool calls (shell, push, ...)")
-  .option("--paranoid", "also ask approval for workspace writes")
+withSandboxFlags(
+  program
+    .argument("[prompt...]", "task for the agent")
+    .option("-p, --print", "non-interactive: run one task, print events, exit")
+    .option("-m, --model <spec>", "provider:name (openai:gpt-5.5 | anthropic:claude-sonnet-4-6 | google:gemini-3.5-flash | ollama:llama3.1 | scripted:file.json)")
+    .option("-C, --cwd <dir>", "workspace root", process.cwd())
+    .option("--dangerously-allow", "auto-approve dangerous tool calls (shell, push, ...)")
+    .option("--paranoid", "also ask approval for workspace writes"),
+)
   .action(async (promptWords: string[], opts: {
     print?: boolean;
     model?: string;
     cwd: string;
     dangerouslyAllow?: boolean;
     paranoid?: boolean;
-  }) => {
+  } & SandboxOpts) => {
     const prompt = promptWords.join(" ").trim();
     const cwd = path.resolve(opts.cwd);
     const policy = policyFrom(opts);
@@ -73,12 +102,27 @@ program
     if (opts.print) {
       if (prompt.length === 0) program.error('print mode needs a prompt: coble -p "do something"');
       const { model, label } = await resolveModel(opts.model);
-      process.exitCode = await runHeadless({ prompt, cwd, model, modelLabel: label, policy });
+      const sandbox = await sandboxFrom(opts, cwd);
+      process.exitCode = await runHeadless({ prompt, cwd, model, modelLabel: label, policy, sandbox });
       return;
     }
 
+    // TUI: suppress sandbox warnings to stderr (they would corrupt the Ink
+    // render); `coble doctor` reports backend status instead.
+    const sandbox = await buildSandbox({
+      cwd,
+      enabled: opts.sandbox === true || opts.strictSandbox === true,
+      strict: opts.strictSandbox === true,
+      allowDomains: opts.allowDomain,
+    });
     render(
-      <App cwd={cwd} modelSpec={opts.model} policy={policy} initialPrompt={prompt.length > 0 ? prompt : undefined} />,
+      <App
+        cwd={cwd}
+        modelSpec={opts.model}
+        policy={policy}
+        initialPrompt={prompt.length > 0 ? prompt : undefined}
+        sandbox={sandbox}
+      />,
     );
   });
 
@@ -90,14 +134,16 @@ program
     console.log(formatSessionsTable(store.list(), Date.now()));
   });
 
-program
-  .command("review")
-  .description("audit a repository → AUDIT.md → branch + pull request (dry-run)")
-  .argument("[path]", "repo path", process.cwd())
-  .option("-m, --model <spec>", "model as provider:name")
-  .option("--live-pr", "actually open the PR via gh (default: dry-run)")
-  .option("--dangerously-allow", "auto-approve git/PR actions (needed for headless runs)")
-  .option("--paranoid", "also ask approval for workspace writes")
+withSandboxFlags(
+  program
+    .command("review")
+    .description("audit a repository → AUDIT.md → branch + pull request (dry-run)")
+    .argument("[path]", "repo path", process.cwd())
+    .option("-m, --model <spec>", "model as provider:name")
+    .option("--live-pr", "actually open the PR via gh (default: dry-run)")
+    .option("--dangerously-allow", "auto-approve git/PR actions (needed for headless runs)")
+    .option("--paranoid", "also ask approval for workspace writes"),
+)
   .action(async function (this: Command, repoPath: string) {
     // -m collides with the root command's flag; merge globals to read it.
     const opts = this.optsWithGlobals() as {
@@ -105,10 +151,11 @@ program
       livePr?: boolean;
       dangerouslyAllow?: boolean;
       paranoid?: boolean;
-    };
+    } & SandboxOpts;
     const cwd = path.resolve(repoPath);
     const { model, label } = await resolveModel(opts.model);
-    const gitTools = makeGitTools({ cwd }, { dryRun: !opts.livePr });
+    const sandbox = await sandboxFrom(opts, cwd);
+    const gitTools = makeGitTools({ cwd, sandbox }, { dryRun: !opts.livePr });
     process.exitCode = await runHeadless({
       prompt: "Audit this repository and open a pull request with your findings.",
       cwd,
@@ -117,6 +164,7 @@ program
       policy: policyFrom(opts),
       extraTools: gitTools,
       systemExtra: REVIEW_PROMPT,
+      sandbox,
     });
   });
 
@@ -255,13 +303,15 @@ program
     }
   });
 
-program
-  .command("resume")
-  .description("continue a session from its last checkpoint")
-  .argument("<id>", "session id (or unique prefix)")
-  .option("--dangerously-allow", "auto-approve dangerous tool calls")
-  .option("--paranoid", "also ask approval for workspace writes")
-  .action(async (id: string, opts: { dangerouslyAllow?: boolean; paranoid?: boolean }) => {
+withSandboxFlags(
+  program
+    .command("resume")
+    .description("continue a session from its last checkpoint")
+    .argument("<id>", "session id (or unique prefix)")
+    .option("--dangerously-allow", "auto-approve dangerous tool calls")
+    .option("--paranoid", "also ask approval for workspace writes"),
+)
+  .action(async (id: string, opts: { dangerouslyAllow?: boolean; paranoid?: boolean } & SandboxOpts) => {
     const store = openSessionStore();
     const session = store.resolve(id);
     if (session === undefined) {
@@ -270,6 +320,7 @@ program
     }
     const { model, label } = await resolveModel(session.model.includes(":") ? session.model : undefined);
     const audit = openAuditLog(auditLogPath());
+    const sandbox = await sandboxFrom(opts, session.cwd);
     const events = observeSession(
       runAgent({
         resume: true,
@@ -279,6 +330,7 @@ program
         checkpointer: openCheckpointer(),
         threadId: session.id,
         audit: audit.record,
+        sandbox,
       }),
       store,
       session.id,

@@ -1,7 +1,8 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import path from "node:path";
 import { parseEnv } from "node:util";
-import { globalEnvPath } from "./store.js";
+import { cobleHome, globalEnvPath } from "./store.js";
 
 /** Keys coble understands. Others are accepted with a warning.
  *  COBLE_HOME is deliberately absent: the global config file lives at
@@ -81,6 +82,54 @@ export function loadLayeredEnv(opts: { cwd?: string } = {}): void {
   };
   apply(readEnvFile(path.join(opts.cwd ?? process.cwd(), ".env")));
   apply(readEnvFile(globalEnvPath()));
+}
+
+/** Provider API-key env vars — scrubbed from sandboxed subprocesses so an
+ *  approved command cannot exfiltrate them. */
+export const PROVIDER_ENV_KEYS = ["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GOOGLE_API_KEY"] as const;
+
+/**
+ * Absolute paths a sandboxed subprocess must not be able to read. Covers
+ * coble's own state (stored API keys + the append-only audit log) and the
+ * usual local-credential stores.
+ */
+export function sandboxDenyReadPaths(): string[] {
+  const home = homedir();
+  return [
+    cobleHome(),
+    path.join(home, ".ssh"),
+    path.join(home, ".aws"),
+    path.join(home, ".gnupg"),
+    path.join(home, ".netrc"),
+    path.join(home, ".npmrc"),
+    path.join(home, ".git-credentials"),
+    path.join(home, ".config", "gcloud"),
+    path.join(home, ".config", "gh"), // GitHub CLI OAuth token (gh pr create)
+    path.join(home, ".docker", "config.json"),
+    path.join(home, ".kube"),
+  ];
+}
+
+/** Provider keys that are actually present in the environment (to scrub). */
+export function presentProviderKeys(): string[] {
+  return PROVIDER_ENV_KEYS.filter((k) => process.env[k] !== undefined);
+}
+
+/**
+ * Hostnames a sandboxed subprocess may reach. Default-deny: the list is empty
+ * unless the user opts in via `COBLE_ALLOWED_DOMAINS` (comma-separated) or
+ * `--allow-domain`. The git remote host is added by the caller when known so
+ * an approved `git push` still works. coble's own model API calls are made by
+ * the parent process and bypass the sandbox, so the provider host is NOT
+ * required here.
+ */
+export function configuredAllowedDomains(extra: string[] = []): string[] {
+  const fromEnv = (process.env.COBLE_ALLOWED_DOMAINS ?? "").split(",");
+  // Trim/filter the merged list so the --allow-domain channel behaves like the
+  // env channel (no whitespace-padded entries that silently never match).
+  return Array.from(
+    new Set([...fromEnv, ...extra].map((s) => s.trim()).filter(Boolean)),
+  );
 }
 
 /** Where an effective env key comes from (for doctor / diagnostics). */
