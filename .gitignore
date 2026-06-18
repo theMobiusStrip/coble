@@ -7,3 +7,4 @@ coverage/
 .env
 PLAN.md
 *.code-workspace
+.claude/
