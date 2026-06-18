@@ -1,23 +1,51 @@
 import type { DangerTier } from "./events.js";
+import { emptyRules, evaluateRules, type CompiledRules } from "./permissionRules.js";
+
+/** Permission modes — presets over the danger-tier gate, plus the read-only
+ *  `plan` mode and the model-judged `auto` mode. */
+export const PERMISSION_MODES = ["plan", "default", "careful", "auto", "bypass"] as const;
+export type PermissionMode = (typeof PERMISSION_MODES)[number];
 
 /**
  * Danger tiers:
- *  - safe:      executed without asking (read-only)
- *  - confirm:   executed by default; asked first in --paranoid mode (workspace writes)
- *  - dangerous: always requires approval (arbitrary shell, push, PR)
+ *  - safe:      read-only
+ *  - confirm:   workspace writes
+ *  - dangerous: arbitrary shell, push, PR
  */
-export interface ApprovalPolicy {
+export interface TierPolicy {
   /** Highest tier that may run without asking. */
   autoTier: "safe" | "confirm";
-  /** Print-mode escape hatch: approve dangerous calls without asking. */
+  /** Approve dangerous calls without asking (bypass mode / --dangerously-allow). */
   dangerouslyAllow: boolean;
 }
 
-export const DEFAULT_POLICY: ApprovalPolicy = { autoTier: "confirm", dangerouslyAllow: false };
+export interface ApprovalPolicy extends TierPolicy {
+  /** Active permission mode (drives the tier preset + auto-mode classifier routing). */
+  mode: PermissionMode;
+  /** User-authored allow/ask/deny rules, evaluated before the mode gate. */
+  rules: CompiledRules;
+}
+
+/** Tier preset each mode compiles to. `plan` is handled explicitly in decideCall
+ *  (it blocks rather than prompts), so its preset is only a safe-only floor. */
+const MODE_TIERS: Record<PermissionMode, TierPolicy> = {
+  plan: { autoTier: "safe", dangerouslyAllow: false },
+  default: { autoTier: "confirm", dangerouslyAllow: false },
+  careful: { autoTier: "safe", dangerouslyAllow: false },
+  auto: { autoTier: "safe", dangerouslyAllow: false },
+  bypass: { autoTier: "confirm", dangerouslyAllow: true },
+};
+
+/** Build a full policy for a mode (+ optional rules). */
+export function policyForMode(mode: PermissionMode, rules: CompiledRules = emptyRules()): ApprovalPolicy {
+  return { mode, ...MODE_TIERS[mode], rules };
+}
+
+export const DEFAULT_POLICY: ApprovalPolicy = policyForMode("default");
 
 const TIER_ORDER: Record<DangerTier, number> = { safe: 0, confirm: 1, dangerous: 2 };
 
-export function tierExceeds(tier: DangerTier, policy: ApprovalPolicy): boolean {
+export function tierExceeds(tier: DangerTier, policy: TierPolicy): boolean {
   if (policy.dangerouslyAllow) return false;
   return TIER_ORDER[tier] > TIER_ORDER[policy.autoTier];
 }
@@ -176,7 +204,69 @@ export function summarizeCall(name: string, args: Record<string, unknown>): stri
   }
   if (name === "git_branch") return String(args.name ?? "");
   if (name === "git_commit") return String(args.message ?? "");
+  if (name === "git_push") return String(args.branch ?? "");
   if (name === "create_pull_request") return String(args.title ?? "");
   const json = JSON.stringify(args);
   return json.length > 120 ? `${json.slice(0, 120)}…` : json;
+}
+
+/** Outcome for a single tool call after rules + mode are applied. */
+export type CallDecision = {
+  outcome: "auto" | "ask" | "classify" | "deny";
+  /** Short reason for the audit trail. */
+  reason: string;
+};
+
+/** Calls that always require a human even in `auto` mode (never the classifier):
+ *  they leave the machine or are irreversibly destructive. Best-effort (full
+ *  shell obfuscation can still slip past — the classifier + sandbox back it up);
+ *  the goal is that a push/PR, or a recursive/force `rm` of an absolute path or
+ *  home, never auto-runs — however it is spelled (structured tool or bash). */
+const RM_RECURSIVE_OR_FORCE = /(^|\s)(-[a-zA-Z]*[rRfF]|--(recursive|force))\b/; // -r/-R/-f/-rf or --recursive/--force
+const RM_ABS_OR_HOME = /(^|\s)(\/|~|\$\{?HOME\}?)/; // a token that is an absolute path, ~, or $HOME
+function isHardPrompt(name: string, summary: string): boolean {
+  if (name === "git_push" || name === "create_pull_request") return true;
+  if (name !== "bash") return false;
+  // Strip quotes so `rm -rf "$HOME"` / `rm -rf '/'` are caught like the bare forms.
+  const s = summary.replace(/['"]/g, "");
+  // Push / PR spelled as a shell command must still reach a human: the structured
+  // git_push / create_pull_request tools are only added by `coble review`, so the
+  // default toolset can push/PR ONLY via bash. Deliberately over-inclusive — for
+  // a hard prompt, failing toward "ask the human" is the safe direction, so this
+  // also catches wrappers (`sudo git push`), git global flags (`git -C r push`),
+  // and chaining. Full obfuscation still falls through to the classifier + sandbox.
+  if (/\bgit\b.*\bpush\b/is.test(s)) return true;
+  if (/\bgh\b.*\bpr\b.*\bcreate\b/is.test(s)) return true;
+  return /\brm\b/.test(s) && RM_RECURSIVE_OR_FORCE.test(s) && RM_ABS_OR_HOME.test(s);
+}
+
+/**
+ * Decide what happens to one tool call: evaluate user rules first (deny → ask →
+ * allow), then fall back to the mode gate. In `auto` mode a tier-`ask` becomes a
+ * `classify` (the model decides) unless it is a hard-prompt action. This is the
+ * single decision point the graph consumes.
+ */
+export function decideCall(
+  name: string,
+  args: Record<string, unknown>,
+  tier: DangerTier,
+  policy: ApprovalPolicy,
+): CallDecision {
+  const summary = summarizeCall(name, args);
+  const hit = evaluateRules(name, summary, policy.rules);
+  // deny always wins, in every mode.
+  if (hit?.effect === "deny") return { outcome: "deny", reason: `rule:deny ${hit.rule.raw}` };
+  // plan mode is read-only: writes/commands are blocked even if an allow/ask rule
+  // matches (only a deny rule, handled above, could change this).
+  if (policy.mode === "plan" && tier !== "safe") {
+    return { outcome: "deny", reason: "mode:plan blocks writes/commands" };
+  }
+  if (hit?.effect === "ask") return { outcome: "ask", reason: `rule:ask ${hit.rule.raw}` };
+  if (hit?.effect === "allow") return { outcome: "auto", reason: `rule:allow ${hit.rule.raw}` };
+  if (policy.mode === "plan") return { outcome: "auto", reason: "mode:plan (read-only)" }; // tier === safe
+  if (!tierExceeds(tier, policy)) return { outcome: "auto", reason: `mode:${policy.mode}` };
+  if (policy.mode === "auto" && !isHardPrompt(name, summary)) {
+    return { outcome: "classify", reason: "mode:auto classifier" };
+  }
+  return { outcome: "ask", reason: `mode:${policy.mode}` };
 }

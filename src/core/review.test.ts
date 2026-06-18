@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { execa } from "execa";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { policyForMode } from "./approval.js";
 import { runAgent } from "./engine.js";
 import type { AgentEvent } from "./events.js";
 import { REVIEW_PROMPT } from "./prompts.js";
@@ -75,7 +76,7 @@ describe("repo review vertical", () => {
         prompt: "Audit this repository and open a pull request with your findings.",
         cwd: repo,
         model,
-        policy: { autoTier: "confirm", dangerouslyAllow: true },
+        policy: policyForMode("bypass"),
         extraTools: gitTools,
         systemExtra: REVIEW_PROMPT,
       }),

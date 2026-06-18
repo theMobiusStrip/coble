@@ -19,10 +19,11 @@ import {
 } from "@langchain/langgraph";
 import {
   classifyToolCall,
+  decideCall,
   summarizeCall,
-  tierExceeds,
   type ApprovalPolicy,
 } from "./approval.js";
+import { classifyAction } from "./autoMode.js";
 import type { AgentEvent, PendingCall } from "./events.js";
 import { systemPrompt, wrapUntrusted, wrapUntrustedError } from "./prompts.js";
 import { capOutput } from "./tools/bash.js";
@@ -65,6 +66,8 @@ export interface GraphDeps {
   /** When true, calls exceeding policy pause via interrupt() for human approval.
    *  When false, they are denied inline (headless default). */
   interactive?: boolean;
+  /** Classifier model used by `auto` mode to judge would-prompt calls. */
+  classifierModel?: BaseChatModel;
   systemExtra?: string;
   maxSteps?: number;
 }
@@ -108,57 +111,85 @@ export function buildGraph(deps: GraphDeps) {
     const last = state.messages.at(-1);
     if (last === undefined || !isAIMessage(last)) return { messages: [] };
 
+    // Correlate each call by its array index (`key`) — always unique even if the
+    // model emits duplicate tool-call ids — so a decision (approval/verdict) can
+    // never leak across calls. The provider-facing `callId` is echoed back
+    // UNCHANGED on the ToolMessage; rewriting it would reference an id absent from
+    // the assistant message, which chat providers reject.
     const calls = (last.tool_calls ?? []).map((call, i) => ({
       call,
+      key: String(i),
       callId: call.id ?? `call_${i}`,
       tier: classifyToolCall(call.name, call.args),
       summary: summarizeCall(call.name, call.args),
     }));
 
-    // Phase 1 — approvals. Anything exceeding policy needs a decision. In
-    // interactive mode we pause the whole graph via interrupt() BEFORE running
-    // any tool (the node re-executes from the top on resume, so no side effect
-    // may precede the interrupt). Headless runs deny such calls outright.
-    const needApproval = calls.filter((c) => tierExceeds(c.tier, policy));
-    const decisions: Record<string, boolean> = {};
-    if (needApproval.length > 0) {
+    // Phase 1 — decide each call (rules → mode). Only calls that need a HUMAN
+    // pause the graph via interrupt() here, BEFORE any tool runs (the node
+    // re-executes from the top on resume, so no tool side effect — and no
+    // nondeterministic model call — may precede the interrupt). Headless denies
+    // them. The `auto`-mode classifier is deliberately NOT run here: it runs in
+    // Phase 2 (post-interrupt), so it executes exactly once and can't be
+    // re-judged across a resume.
+    type Resolved = { action: "run" | "deny"; reason: string; approved?: boolean };
+    const decision = new Map<string, ReturnType<typeof decideCall>>();
+    for (const c of calls) decision.set(c.key, decideCall(c.call.name, c.call.args, c.tier, policy));
+    const askCalls = calls.filter((c) => decision.get(c.key)?.outcome === "ask");
+
+    const humanApproved = new Map<string, boolean>();
+    if (askCalls.length > 0) {
       if (deps.interactive) {
         const request: ApprovalRequest = {
-          calls: needApproval.map<PendingCall>((c) => ({
-            id: c.callId,
-            name: c.call.name,
-            summary: c.summary,
-            tier: c.tier,
-          })),
+          calls: askCalls.map<PendingCall>((c) => ({ id: c.key, name: c.call.name, summary: c.summary, tier: c.tier })),
         };
         const response = interrupt(request) as ApprovalResponse | undefined;
-        for (const c of needApproval) decisions[c.callId] = response?.decisions?.[c.callId] === true;
+        for (const c of askCalls) humanApproved.set(c.key, response?.decisions?.[c.key] === true);
       } else {
-        for (const c of needApproval) decisions[c.callId] = false;
+        for (const c of askCalls) humanApproved.set(c.key, false);
       }
     }
 
-    // Phase 2 — execute (runs once, post-approval).
+    // Phase 2 — resolve + execute (runs once, post-approval). The classifier
+    // runs here so its verdict isn't recomputed across an interrupt/resume.
     const results: ToolMessage[] = [];
-    for (const { call, callId, tier, summary } of calls) {
-      if (tierExceeds(tier, policy) && decisions[callId] !== true) {
-        const reason = deps.interactive
-          ? "user denied approval"
-          : `"${tier}"-tier call requires user approval`;
-        emit({ type: "tool_denied", name: call.name, input: summary, reason });
-        audit?.({ ts: new Date().toISOString(), tool: call.name, summary, tier, decision: "denied" });
+    for (const { call, key, callId, tier, summary } of calls) {
+      const dec = decision.get(key) ?? { outcome: "deny" as const, reason: "no decision" };
+      let d: Resolved;
+      if (dec.outcome === "auto") {
+        d = { action: "run", reason: dec.reason };
+      } else if (dec.outcome === "ask") {
+        d = humanApproved.get(key)
+          ? { action: "run", reason: "user approved", approved: true }
+          : { action: "deny", reason: deps.interactive ? "user denied approval" : `"${tier}"-tier call requires approval (headless)` };
+      } else if (dec.outcome === "classify") {
+        const verdict = await classifyAction({
+          model: deps.classifierModel,
+          history: state.messages,
+          call: { name: call.name, summary, args: call.args as Record<string, unknown> },
+          signal: config.signal,
+        });
+        // Fail closed: a block OR any classifier error denies (the agent adapts).
+        d = verdict.allow
+          ? { action: "run", reason: `auto:allow ${verdict.reason}` }
+          : { action: "deny", reason: `${verdict.errored ? "auto:error" : "auto:block"} ${verdict.reason}` };
+      } else {
+        d = { action: "deny", reason: dec.reason };
+      }
+
+      if (d.action === "deny") {
+        emit({ type: "tool_denied", name: call.name, input: summary, reason: d.reason });
+        audit?.({ ts: new Date().toISOString(), tool: call.name, summary, tier, decision: "denied", detail: d.reason });
         results.push(
           new ToolMessage({
             tool_call_id: callId,
             name: call.name,
-            content: `DENIED (${reason}): this ${tier}-tier call was not executed. Do not retry the identical call; adapt your approach or finish with an explanation.`,
+            content: `DENIED (${d.reason}): this ${tier}-tier call was not executed. Do not retry the identical call; adapt your approach or finish with an explanation.`,
             status: "error",
           }),
         );
         continue;
       }
 
-      const approvedDangerous = tierExceeds(tier, policy) && decisions[callId] === true;
       const t = toolMap.get(call.name);
       if (t === undefined) {
         results.push(
@@ -183,7 +214,8 @@ export function buildGraph(deps: GraphDeps) {
           tool: call.name,
           summary,
           tier,
-          decision: approvedDangerous ? "approved" : "auto",
+          decision: d.approved ? "approved" : "auto",
+          detail: d.reason,
         });
         results.push(
           new ToolMessage({

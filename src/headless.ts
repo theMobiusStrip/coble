@@ -20,6 +20,7 @@ export interface HeadlessRun {
   extraTools?: StructuredToolInterface[];
   systemExtra?: string;
   sandbox?: Sandbox;
+  classifierModel?: BaseChatModel;
 }
 
 /** Create a session, run a task headlessly with persistence + audit, render to stdout. */
@@ -44,6 +45,7 @@ export async function runHeadless(opts: HeadlessRun): Promise<number> {
       extraTools: opts.extraTools,
       systemExtra: opts.systemExtra,
       sandbox: opts.sandbox,
+      classifierModel: opts.classifierModel,
     }),
     store,
     session.id,

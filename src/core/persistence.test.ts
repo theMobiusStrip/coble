@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { SqliteSaver } from "@langchain/langgraph-checkpoint-sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { DEFAULT_POLICY } from "./approval.js";
+import { DEFAULT_POLICY, policyForMode } from "./approval.js";
 import { runAgent } from "./engine.js";
 import type { AgentEvent } from "./events.js";
 import { ScriptedChatModel } from "./scripted.js";
@@ -40,7 +40,7 @@ describe("durable resume", () => {
         prompt: "append a marker then continue",
         cwd,
         model: crashing,
-        policy: { autoTier: "confirm", dangerouslyAllow: true },
+        policy: policyForMode("bypass"),
         checkpointer,
         threadId,
       }),
@@ -56,7 +56,7 @@ describe("durable resume", () => {
         resume: true,
         cwd,
         model: healthy,
-        policy: { autoTier: "confirm", dangerouslyAllow: true },
+        policy: policyForMode("bypass"),
         checkpointer,
         threadId,
       }),

@@ -98,7 +98,10 @@ describe("human-in-the-loop approval", () => {
       },
       { content: "Did the safe part." },
     ]);
-    const onApproval: ApprovalHandler = async () => ({ ok: true, no: false });
+    // Key by the id we're handed (an opaque per-call token), approving the mkdir
+    // and denying the rm — don't assume the id equals the model's tool-call id.
+    const onApproval: ApprovalHandler = async (calls) =>
+      Object.fromEntries(calls.map((c) => [c.id, c.summary.startsWith("mkdir")]));
     const events = await collect(runAgent({ prompt: "mixed", cwd, model, onApproval }));
 
     expect((await stat(path.join(cwd, "yes-dir"))).isDirectory()).toBe(true);
