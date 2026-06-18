@@ -17,7 +17,8 @@ const LOGO = ["  ▟█▙  ", " ▟███▙ ", "▟█████▙", "�
 
 const DEFAULT_TIPS = [
   "shell & git actions pause for your approval",
-  'tab cycles tool detail (hidden/collapsed/full) · "exit" to quit · ctrl+c to cancel',
+  "shift+tab cycles permission mode (plan/default/careful/auto/bypass)",
+  'tab cycles tool detail (hidden/compact/full) · "exit" to quit · ctrl+c to cancel',
 ];
 
 export function Banner({ cwd, model, hint, notes }: BannerProps) {

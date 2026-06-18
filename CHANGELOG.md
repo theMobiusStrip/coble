@@ -4,6 +4,17 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and the project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.4.0]
+
+TUI key-hint clarity.
+
+### Changed
+- The startup banner now states how to switch permission mode:
+  **`shift+tab cycles permission mode (plan/default/careful/auto/bypass)`**.
+- Renamed the middle tool-trail detail state `collapsed` → `compact` so the
+  status bar (`tools: compact`) matches what's shown — every call listed, results
+  summarized. Behaviour is unchanged: `tab` still cycles `hidden → compact → full`.
+
 ## [0.3.0]
 
 Permission modes + customizable rules. See [SECURITY.md](./SECURITY.md).
