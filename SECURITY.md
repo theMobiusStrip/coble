@@ -46,6 +46,8 @@ Each answers a *different* question; they are complementary, not redundant.
 | --- | --- | --- | --- |
 | **Classifier** | "Should we ask the human?" | coble — deterministic string parse, no model (`src/core/approval.ts`) | **No** — advisory triage, bypassable |
 | **Human gate** | "Should this happen at all?" | `interrupt()` + human (`src/core/graph.ts`) | Yes, for *consent* |
+| **Rules** | "Pre-approved or always-blocked?" | allow/ask/deny in `settings.yaml` (`src/core/permissionRules.ts`) | Partly — `deny` is enforced; like any allowlist, not a containment boundary |
+| **Auto classifier** | "Should the model auto-approve this?" | a classifier **LLM**, opt-in `auto` mode (`src/core/autoMode.ts`) | **No** — probabilistic, injection-influenceable |
 | **Sandbox** | "What can the command touch?" | OS — Seatbelt / bubblewrap (`src/core/sandbox.ts`) | **Yes** — the real wall |
 | **Spotlighting** | "Is this data or instructions?" | untrusted-data envelope (`src/core/prompts.ts`) | No — injection defense-in-depth |
 | **Audit** | "What happened, and why allowed?" | append-only JSONL (`src/core/audit.ts`) | Yes, for *record* |
@@ -96,6 +98,45 @@ backend is available on your platform.
 Recommended profile for auditing untrusted code:
 `coble review <repo> --sandbox` (or `--strict-sandbox`).
 
+## Permission modes & rules
+
+**Modes** (`--permission-mode`, settings `defaultMode`, or Shift+Tab in the TUI):
+
+| Mode | reads | writes | dangerous (shell/push/PR) |
+| --- | --- | --- | --- |
+| `plan` | run | **blocked** | **blocked** (read-only) |
+| `default` | auto | auto | ask human |
+| `careful` | auto | ask human | ask human |
+| `auto` | auto | classifier | classifier (push/PR still ask) |
+| `bypass` | auto | auto | auto |
+
+**Rules** — `allow` / `ask` / `deny` patterns (`Tool(pattern)`, e.g. `Bash(git push:*)`,
+`Read(./src/**)`) in `settings.yaml`, evaluated **deny → ask → allow**, overriding the mode
+per call. `deny` holds in every mode (including `bypass`); `allow` auto-runs a matched call;
+`ask` always prompts. Bash deny matching is hardened against the common evasions —
+command chaining, env-var prefixes, casing, absolute/relative binary paths, and transparent
+wrappers (`sudo`, `env`, `timeout`, `nice`, `xargs`, `busybox`, …); path rules normalize
+`..`/separators and match by basename, so `Read(.env)` also blocks `*/.env`. But string
+matching **cannot** be exhaustive: the wrapper set is open-ended and full shell obfuscation
+(`sh -c '…'`, `eval`, base64) defeats any parser. **Treat bash deny rules as best-effort
+defense-in-depth; for a hard guarantee use `--sandbox`** (the OS boundary), which contains a
+command regardless of how it is spelled.
+
+**Project settings can only tighten.** A `<repo>/.coble/settings.yaml` ships inside the
+untrusted repo, so its `allow`, `defaultMode`, and `autoMode.model` are **ignored** — only
+its `deny`/`ask` apply. Those grants come from the global `~/.coble/settings.yaml` or the
+CLI, so a cloned repo cannot self-escalate (mirrors Claude Code).
+
+### `auto` mode is model-judged, not a boundary
+
+In `auto` mode a separate **classifier LLM** decides whether a would-prompt call runs,
+instead of asking you. It is shown the task and the agent's intent but **not** tool results
+or file contents (so injected output cannot drive it); `git push`/PR and `rm -rf` of `/` or
+`$HOME` still require a human; a block makes the agent replan. It is convenient but **not a
+security boundary** — it is probabilistic and can be wrong. Pair it with `--sandbox` (the
+OS-enforced boundary). The classifier is configurable (`COBLE_AUTO_MODEL` /
+`settings.permissions.autoMode.model`) and adds one model round-trip per gated call.
+
 ## Honest limitations (do not overclaim)
 
 - **The classifier is not a boundary.** Allowlist-parsing of shell strings can
@@ -138,8 +179,6 @@ Recommended profile for auditing untrusted code:
 
 ## Not yet implemented (tracked)
 
-- Declarative allow/deny permission rules (Claude-Code-style), to cut approval
-  fatigue without weakening the gate.
 - TLS-terminating egress proxy for content-level inspection.
 - Tamper-evident (hash-chained) audit log.
 

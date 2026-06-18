@@ -5,7 +5,9 @@ import { execa } from "execa";
 import type { BaseChatModel } from "@langchain/core/language_models/chat_models";
 import { memoryAuditLog } from "../core/audit.js";
 import { estimateCostUsd } from "../core/cost.js";
+import { DEFAULT_POLICY, policyForMode } from "../core/approval.js";
 import { runAgent, type ApprovalHandler } from "../core/engine.js";
+import { compileRuleList } from "../core/permissionRules.js";
 import type { AgentEvent } from "../core/events.js";
 import { ScriptedChatModel } from "../core/scripted.js";
 import { makeGitTools } from "../core/tools/gitTools.js";
@@ -50,12 +52,24 @@ export async function runTask(task: EvalTask, modelFor: ModelForTask, nowMs: num
     ? makeGitTools({ cwd }, { dryRun: true, createPr: async () => "dry://pr" })
     : undefined;
 
+  const policy =
+    task.mode || task.rules
+      ? policyForMode(task.mode ?? "default", {
+          allow: compileRuleList(task.rules?.allow ?? [], true), // grants are case-sensitive
+          ask: compileRuleList(task.rules?.ask ?? []),
+          deny: compileRuleList(task.rules?.deny ?? []),
+        })
+      : DEFAULT_POLICY;
+
   try {
     const stream = runAgent({
       prompt: task.prompt,
       cwd,
       model,
-      policy: { autoTier: "confirm", dangerouslyAllow: false },
+      policy,
+      // auto mode routes would-prompt calls to a classifier; without a model it
+      // would fail closed and deny everything. Reuse the task model as the judge.
+      classifierModel: policy.mode === "auto" ? model : undefined,
       onApproval: task.approve === "all" ? approveAll : undefined,
       extraTools,
       audit: audit.record,

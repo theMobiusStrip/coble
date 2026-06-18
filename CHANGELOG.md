@@ -4,6 +4,29 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and the project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.3.0]
+
+Permission modes + customizable rules. See [SECURITY.md](./SECURITY.md).
+
+### Added
+- **Permission modes** (`--permission-mode`, settings `defaultMode`, TUI Shift+Tab):
+  `plan` (read-only), `default`, `careful`, `auto` (model-judged), `bypass`.
+  `--paranoid` / `--dangerously-allow` remain as aliases for `careful` / `bypass`.
+- **Customizable allow/ask/deny rules** in layered `settings.yaml`
+  (`~/.coble/settings.yaml` global + `<cwd>/.coble/settings.yaml` project),
+  evaluated deny → ask → allow, overriding the mode gate per call. A **project
+  file may only tighten** (its `allow`/`defaultMode`/`autoMode` are ignored) so a
+  cloned repo cannot self-escalate.
+- **`auto` mode** routes would-prompt calls to a configurable classifier model
+  (`COBLE_AUTO_MODEL` / `settings.permissions.autoMode.model`) instead of the
+  human. The classifier is shown the task + intent but **not** tool results
+  (injection resistance), `git push`/PR still require a human, and it is **not** a
+  security boundary — pair with `--sandbox`.
+
+### Notes
+- The deterministic classifier still decides *whether to ask*; `auto` mode adds an
+  optional model judge on top — opt-in, per the design in `SECURITY.md`.
+
 ## [0.2.0]
 
 Security model: evolve the command classifier into a defense-in-depth trust

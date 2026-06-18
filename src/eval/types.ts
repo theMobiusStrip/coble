@@ -1,3 +1,4 @@
+import type { PermissionMode } from "../core/approval.js";
 import type { ScriptTurn } from "../core/scripted.js";
 
 /** A single declarative assertion. Exactly one key is set. */
@@ -26,6 +27,10 @@ export interface EvalTask {
   script: ScriptTurn[];
   /** Extra toolsets to enable, e.g. "git". */
   tools?: Array<"git">;
+  /** Permission mode for the run (default: "default"). */
+  mode?: PermissionMode;
+  /** Allow/ask/deny rule patterns to apply during the run. */
+  rules?: { allow?: string[]; ask?: string[]; deny?: string[] };
   /** Approval behaviour for policy-exceeding calls during the run. */
   approve?: "all" | "none";
   fixture?: {

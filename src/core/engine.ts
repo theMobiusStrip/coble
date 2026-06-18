@@ -34,6 +34,8 @@ export interface EngineOptions {
   /** OS sandbox confining bash/git subprocesses. Default: no-op passthrough.
    *  Lifecycle (init/dispose) is owned here, once per run. */
   sandbox?: Sandbox;
+  /** Classifier model for `auto` permission mode (model-judged approvals). */
+  classifierModel?: BaseChatModel;
 }
 
 interface InterruptEnvelope {
@@ -90,6 +92,7 @@ export function runAgent(opts: EngineOptions): AsyncIterable<AgentEvent> {
     audit: opts.audit,
     checkpointer,
     interactive,
+    classifierModel: opts.classifierModel,
     systemExtra: opts.systemExtra,
     maxSteps: opts.maxSteps,
   });

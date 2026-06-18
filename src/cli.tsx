@@ -2,9 +2,10 @@
 import { writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import type { BaseChatModel } from "@langchain/core/language_models/chat_models";
 import { Command } from "commander";
 import { render } from "ink";
-import type { ApprovalPolicy } from "./core/approval.js";
+import { policyForMode, PERMISSION_MODES, type ApprovalPolicy, type PermissionMode } from "./core/approval.js";
 import { openAuditLog } from "./core/audit.js";
 import {
   KNOWN_KEYS,
@@ -15,14 +16,13 @@ import {
   unsetGlobalConfig,
 } from "./core/config.js";
 
-// Config precedence: shell env > <cwd>/.env > ~/.coble/env (see core/config.ts).
-loadLayeredEnv();
 import { openCheckpointer } from "./core/checkpointer.js";
 import { formatUsage } from "./core/cost.js";
 import { runAgent } from "./core/engine.js";
 import { resolveModel } from "./core/models.js";
 import { REVIEW_PROMPT } from "./core/prompts.js";
 import { buildSandbox, type Sandbox } from "./core/sandbox.js";
+import { loadSettings } from "./core/settings.js";
 import { observeSession } from "./core/sessionRunner.js";
 import { openSessionStore } from "./core/sessions.js";
 import { auditLogPath, globalEnvPath } from "./core/store.js";
@@ -39,34 +39,79 @@ import { VERSION } from "./version.js";
 
 const TASKS_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../evals/tasks");
 
-function policyFrom(opts: { dangerouslyAllow?: boolean; paranoid?: boolean }): ApprovalPolicy {
-  return {
-    autoTier: opts.paranoid ? "safe" : "confirm",
-    dangerouslyAllow: opts.dangerouslyAllow ?? false,
-  };
-}
+const warnStderr = (m: string) => console.error(`\x1b[33m⚠ ${m}\x1b[0m`);
 
-interface SandboxOpts {
+interface RunOpts {
+  permissionMode?: string;
+  dangerouslyAllow?: boolean;
+  paranoid?: boolean;
   sandbox?: boolean;
   strictSandbox?: boolean;
   allowDomain?: string[];
 }
 
+/** Resolve the permission policy from flags + layered settings. Precedence:
+ *  --permission-mode > legacy --paranoid/--dangerously-allow > settings.defaultMode. */
+function resolvePermissions(opts: RunOpts, cwd: string): { policy: ApprovalPolicy; autoModel?: string } {
+  const settings = loadSettings({ cwd, onWarn: warnStderr });
+  let mode: PermissionMode;
+  if (opts.permissionMode !== undefined) {
+    if (!(PERMISSION_MODES as readonly string[]).includes(opts.permissionMode)) {
+      program.error(`invalid --permission-mode "${opts.permissionMode}" (expected: ${PERMISSION_MODES.join(", ")})`);
+    }
+    mode = opts.permissionMode as PermissionMode;
+  } else if (opts.dangerouslyAllow) mode = "bypass";
+  else if (opts.paranoid) mode = "careful";
+  else mode = settings.defaultMode ?? "default";
+  return { policy: policyForMode(mode, settings.rules), autoModel: settings.autoModel };
+}
+
+/**
+ * Resolve a separate classifier model for `auto` mode (settings.autoMode.model
+ * or COBLE_AUTO_MODEL). Returns `configured` so the caller can tell apart:
+ *  - not configured     → fall back to the agent model (the convenient default)
+ *  - configured + ok    → use it
+ *  - configured + failed → `model` undefined ⇒ caller must NOT fall back to the
+ *    agent model; auto mode then fails closed (the configured judge is gone).
+ */
+async function resolveAutoModel(spec?: string): Promise<{ configured: boolean; model?: BaseChatModel }> {
+  const s = spec ?? process.env.COBLE_AUTO_MODEL;
+  if (!s) return { configured: false };
+  try {
+    return { configured: true, model: (await resolveModel(s)).model };
+  } catch (err) {
+    warnStderr(
+      `auto-mode classifier "${s}" unavailable: ${err instanceof Error ? err.message : String(err)} — auto mode will deny would-prompt actions`,
+    );
+    return { configured: true };
+  }
+}
+
+/** Pick the classifier model for auto mode: the configured one (or undefined,
+ *  which fails closed, if it failed to resolve), else the agent model. */
+function classifierFor(auto: { configured: boolean; model?: BaseChatModel }, agent: BaseChatModel): BaseChatModel | undefined {
+  return auto.configured ? auto.model : agent;
+}
+
 /** Build the OS sandbox from CLI flags. Off (no-op) unless --sandbox is set. */
-function sandboxFrom(opts: SandboxOpts, cwd: string): Promise<Sandbox> {
+function sandboxFrom(opts: RunOpts, cwd: string): Promise<Sandbox> {
   return buildSandbox({
     cwd,
     enabled: opts.sandbox === true || opts.strictSandbox === true,
     strict: opts.strictSandbox === true,
     allowDomains: opts.allowDomain,
-    onWarn: (m) => console.error(`\x1b[33m⚠ ${m}\x1b[0m`),
+    onWarn: warnStderr,
   });
 }
 
-/** Append the sandbox flags shared by the run-capable commands. */
 const collectDomain = (v: string, acc: string[]): string[] => acc.concat(v);
-function withSandboxFlags(cmd: Command): Command {
+
+/** Permission + sandbox flags shared by the run-capable commands. */
+function withRunFlags(cmd: Command): Command {
   return cmd
+    .option("--permission-mode <mode>", `permission mode: ${PERMISSION_MODES.join(" | ")}`)
+    .option("--paranoid", "alias for --permission-mode careful")
+    .option("--dangerously-allow", "alias for --permission-mode bypass")
     .option("--sandbox", "confine bash/git in an OS sandbox (fs jail + egress allowlist)")
     .option("--strict-sandbox", "refuse to run if the sandbox is unavailable (implies --sandbox)")
     .option("--allow-domain <host>", "permit a hostname under --sandbox (repeatable)", collectDomain, []);
@@ -79,31 +124,25 @@ program
   .description("Local, provider-agnostic agent CLI — LangGraph.js core, Ink TUI")
   .version(VERSION);
 
-withSandboxFlags(
+withRunFlags(
   program
     .argument("[prompt...]", "task for the agent")
     .option("-p, --print", "non-interactive: run one task, print events, exit")
     .option("-m, --model <spec>", "provider:name (openai:gpt-5.5 | anthropic:claude-sonnet-4-6 | google:gemini-3.5-flash | ollama:llama3.1 | scripted:file.json)")
-    .option("-C, --cwd <dir>", "workspace root", process.cwd())
-    .option("--dangerously-allow", "auto-approve dangerous tool calls (shell, push, ...)")
-    .option("--paranoid", "also ask approval for workspace writes"),
+    .option("-C, --cwd <dir>", "workspace root", process.cwd()),
 )
-  .action(async (promptWords: string[], opts: {
-    print?: boolean;
-    model?: string;
-    cwd: string;
-    dangerouslyAllow?: boolean;
-    paranoid?: boolean;
-  } & SandboxOpts) => {
+  .action(async (promptWords: string[], opts: { print?: boolean; model?: string; cwd: string } & RunOpts) => {
     const prompt = promptWords.join(" ").trim();
     const cwd = path.resolve(opts.cwd);
-    const policy = policyFrom(opts);
+    loadLayeredEnv({ cwd }); // load env for the workspace: shell > <cwd>/.env > ~/.coble/env
+    const { policy, autoModel } = resolvePermissions(opts, cwd);
 
     if (opts.print) {
       if (prompt.length === 0) program.error('print mode needs a prompt: coble -p "do something"');
       const { model, label } = await resolveModel(opts.model);
       const sandbox = await sandboxFrom(opts, cwd);
-      process.exitCode = await runHeadless({ prompt, cwd, model, modelLabel: label, policy, sandbox });
+      const classifierModel = policy.mode === "auto" ? classifierFor(await resolveAutoModel(autoModel), model) : undefined;
+      process.exitCode = await runHeadless({ prompt, cwd, model, modelLabel: label, policy, sandbox, classifierModel });
       return;
     }
 
@@ -115,6 +154,7 @@ withSandboxFlags(
       strict: opts.strictSandbox === true,
       allowDomains: opts.allowDomain,
     });
+    const auto = await resolveAutoModel(autoModel); // explicit classifier (if any); App falls back to its model only when none is configured
     render(
       <App
         cwd={cwd}
@@ -122,6 +162,8 @@ withSandboxFlags(
         policy={policy}
         initialPrompt={prompt.length > 0 ? prompt : undefined}
         sandbox={sandbox}
+        classifierModel={auto.model}
+        autoClassifierConfigured={auto.configured}
       />,
     );
   });
@@ -134,37 +176,34 @@ program
     console.log(formatSessionsTable(store.list(), Date.now()));
   });
 
-withSandboxFlags(
+withRunFlags(
   program
     .command("review")
     .description("audit a repository → AUDIT.md → branch + pull request (dry-run)")
     .argument("[path]", "repo path", process.cwd())
     .option("-m, --model <spec>", "model as provider:name")
-    .option("--live-pr", "actually open the PR via gh (default: dry-run)")
-    .option("--dangerously-allow", "auto-approve git/PR actions (needed for headless runs)")
-    .option("--paranoid", "also ask approval for workspace writes"),
+    .option("--live-pr", "actually open the PR via gh (default: dry-run)"),
 )
   .action(async function (this: Command, repoPath: string) {
     // -m collides with the root command's flag; merge globals to read it.
-    const opts = this.optsWithGlobals() as {
-      model?: string;
-      livePr?: boolean;
-      dangerouslyAllow?: boolean;
-      paranoid?: boolean;
-    } & SandboxOpts;
+    const opts = this.optsWithGlobals() as { model?: string; livePr?: boolean } & RunOpts;
     const cwd = path.resolve(repoPath);
+    loadLayeredEnv({ cwd }); // load env for the repo path
     const { model, label } = await resolveModel(opts.model);
+    const { policy, autoModel } = resolvePermissions(opts, cwd);
     const sandbox = await sandboxFrom(opts, cwd);
     const gitTools = makeGitTools({ cwd, sandbox }, { dryRun: !opts.livePr });
+    const classifierModel = policy.mode === "auto" ? classifierFor(await resolveAutoModel(autoModel), model) : undefined;
     process.exitCode = await runHeadless({
       prompt: "Audit this repository and open a pull request with your findings.",
       cwd,
       model,
       modelLabel: label,
-      policy: policyFrom(opts),
+      policy,
       extraTools: gitTools,
       systemExtra: REVIEW_PROMPT,
       sandbox,
+      classifierModel,
     });
   });
 
@@ -178,6 +217,7 @@ program
   .action(async function (this: Command) {
     // -m collides with the root command's flag; merge globals to read it.
     const opts = this.optsWithGlobals() as { model?: string; filter?: string; write?: boolean; tasks: string };
+    loadLayeredEnv(); // --model resolution may need keys from the global config
     let tasks = loadTasks(opts.tasks);
     if (opts.filter) tasks = tasks.filter((t) => t.id.includes(opts.filter!));
     if (tasks.length === 0) {
@@ -210,6 +250,7 @@ program
   .description("check your setup: node, state dir, keys, model, connectivity, git/gh")
   .option("--no-ping", "skip live network checks (provider ping, ollama)")
   .action(async (opts: { ping: boolean }) => {
+    loadLayeredEnv(); // pull global ~/.coble/env (keys, model) into process.env
     const { results, exitCode } = await runDoctor({ ping: opts.ping });
     console.log(renderDoctor(results));
     if (exitCode !== 0) {
@@ -303,34 +344,36 @@ program
     }
   });
 
-withSandboxFlags(
+withRunFlags(
   program
     .command("resume")
     .description("continue a session from its last checkpoint")
-    .argument("<id>", "session id (or unique prefix)")
-    .option("--dangerously-allow", "auto-approve dangerous tool calls")
-    .option("--paranoid", "also ask approval for workspace writes"),
+    .argument("<id>", "session id (or unique prefix)"),
 )
-  .action(async (id: string, opts: { dangerouslyAllow?: boolean; paranoid?: boolean } & SandboxOpts) => {
+  .action(async (id: string, opts: RunOpts) => {
     const store = openSessionStore();
     const session = store.resolve(id);
     if (session === undefined) {
       program.error(`no session matching "${id}"`);
       return;
     }
+    loadLayeredEnv({ cwd: session.cwd }); // load env for the session's workspace
     const { model, label } = await resolveModel(session.model.includes(":") ? session.model : undefined);
     const audit = openAuditLog(auditLogPath());
+    const { policy, autoModel } = resolvePermissions(opts, session.cwd);
     const sandbox = await sandboxFrom(opts, session.cwd);
+    const classifierModel = policy.mode === "auto" ? classifierFor(await resolveAutoModel(autoModel), model) : undefined;
     const events = observeSession(
       runAgent({
         resume: true,
         cwd: session.cwd,
         model,
-        policy: policyFrom(opts),
+        policy,
         checkpointer: openCheckpointer(),
         threadId: session.id,
         audit: audit.record,
         sandbox,
+        classifierModel,
       }),
       store,
       session.id,

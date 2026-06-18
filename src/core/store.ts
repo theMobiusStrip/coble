@@ -29,3 +29,13 @@ export function auditLogPath(): string {
 export function globalEnvPath(): string {
   return path.join(cobleHome(), "env");
 }
+
+/** Global permission settings (YAML). Trusted scope: may grant allow/auto/bypass. */
+export function globalSettingsPath(): string {
+  return path.join(cobleHome(), "settings.yaml");
+}
+
+/** Project-local permission settings (YAML). Untrusted scope: may only tighten. */
+export function projectSettingsPath(cwd: string): string {
+  return path.join(cwd, ".coble", "settings.yaml");
+}

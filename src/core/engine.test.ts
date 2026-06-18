@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { DEFAULT_POLICY } from "./approval.js";
+import { DEFAULT_POLICY, policyForMode } from "./approval.js";
 import { runAgent } from "./engine.js";
 import type { AgentEvent } from "./events.js";
 import { ScriptedChatModel } from "./scripted.js";
@@ -120,7 +120,7 @@ describe("runAgent end-to-end (scripted model)", () => {
       { content: "done" },
     ]);
     const events = await collect(
-      runAgent({ prompt: "mkdir", cwd, model, policy: { autoTier: "confirm", dangerouslyAllow: true } }),
+      runAgent({ prompt: "mkdir", cwd, model, policy: policyForMode("bypass") }),
     );
     expect(events.some((e) => e.type === "tool_end" && e.ok)).toBe(true);
     expect((await stat(path.join(cwd, "made-it"))).isDirectory()).toBe(true);

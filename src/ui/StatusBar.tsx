@@ -8,6 +8,8 @@ export interface StatusBarProps {
   usage: TokenUsage;
   autoApprove?: boolean;
   toolDetail?: string;
+  /** Active permission mode (e.g. "default", "auto"). */
+  mode?: string;
   /** Short sandbox status (e.g. "sandbox on"); omitted when --sandbox is off. */
   sandbox?: string;
 }
@@ -17,11 +19,12 @@ function tokens(n: number): string {
 }
 
 /** Dim one-line footer: model · token total · estimated cost · sandbox. */
-export function StatusBar({ model, usage, autoApprove, toolDetail, sandbox }: StatusBarProps) {
+export function StatusBar({ model, usage, autoApprove, toolDetail, mode, sandbox }: StatusBarProps) {
   const total = usage.inputTokens + usage.outputTokens;
   const cost = estimateCostUsd(model, usage);
   const parts = [shortModel(model), `${tokens(total)} tok`];
   if (cost !== undefined && cost > 0) parts.push(`~$${cost.toFixed(4)}`);
+  if (mode) parts.push(`mode: ${mode}`);
   if (autoApprove) parts.push("auto-approve");
   if (toolDetail) parts.push(`tools: ${toolDetail}`);
   if (sandbox) parts.push(sandbox);

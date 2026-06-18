@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { classifyBash, classifyToolCall, tierExceeds, DEFAULT_POLICY } from "./approval.js";
+import { classifyBash, classifyToolCall, decideCall, policyForMode, summarizeCall, tierExceeds, DEFAULT_POLICY } from "./approval.js";
+import { compileRuleList, emptyRules } from "./permissionRules.js";
 
 describe("classifyBash", () => {
   it.each([
@@ -114,5 +115,105 @@ describe("tierExceeds", () => {
   it("dangerouslyAllow opens everything", () => {
     const open = { autoTier: "confirm" as const, dangerouslyAllow: true };
     expect(tierExceeds("dangerous", open)).toBe(false);
+  });
+});
+
+describe("decideCall — modes", () => {
+  const out = (mode: Parameters<typeof policyForMode>[0], name: string, args: Record<string, unknown>, tier: "safe" | "confirm" | "dangerous") =>
+    decideCall(name, args, tier, policyForMode(mode)).outcome;
+
+  it("default: reads+writes auto, dangerous asks", () => {
+    expect(out("default", "read_file", { path: "a" }, "safe")).toBe("auto");
+    expect(out("default", "write_file", { path: "a" }, "confirm")).toBe("auto");
+    expect(out("default", "bash", { command: "rm -rf x" }, "dangerous")).toBe("ask");
+  });
+
+  it("plan: read-only — writes/commands are blocked, not prompted", () => {
+    expect(out("plan", "read_file", { path: "a" }, "safe")).toBe("auto");
+    expect(out("plan", "write_file", { path: "a" }, "confirm")).toBe("deny");
+    expect(out("plan", "bash", { command: "rm x" }, "dangerous")).toBe("deny");
+  });
+
+  it("careful: writes also ask", () => {
+    expect(out("careful", "write_file", { path: "a" }, "confirm")).toBe("ask");
+    expect(out("careful", "read_file", { path: "a" }, "safe")).toBe("auto");
+  });
+
+  it("bypass: everything auto", () => {
+    expect(out("bypass", "bash", { command: "rm -rf x" }, "dangerous")).toBe("auto");
+  });
+
+  it("auto: would-prompt calls route to the classifier, but push/PR still ask", () => {
+    expect(out("auto", "bash", { command: "rm -rf x" }, "dangerous")).toBe("classify");
+    expect(out("auto", "write_file", { path: "a" }, "confirm")).toBe("classify");
+    expect(out("auto", "read_file", { path: "a" }, "safe")).toBe("auto");
+    expect(out("auto", "git_push", { branch: "x" }, "dangerous")).toBe("ask"); // hard prompt
+    expect(out("auto", "create_pull_request", { title: "x" }, "dangerous")).toBe("ask");
+    // push/PR spelled as a bash command must still ask a human (the structured
+    // tools are only present under `coble review`; the default toolset uses bash).
+    expect(out("auto", "bash", { command: "git push origin main" }, "dangerous")).toBe("ask");
+    expect(out("auto", "bash", { command: "git -C /repo push" }, "dangerous")).toBe("ask"); // git global flag
+    expect(out("auto", "bash", { command: "sudo git push" }, "dangerous")).toBe("ask"); // wrapper
+    expect(out("auto", "bash", { command: "gh pr create --fill" }, "dangerous")).toBe("ask");
+    expect(out("auto", "bash", { command: "git status" }, "dangerous")).toBe("classify"); // not a push → classifier
+    // Binary casing must not evade the hard prompt: on a case-insensitive FS
+    // (macOS default) `GIT push` / `GH PR CREATE` invoke the real git/gh.
+    expect(out("auto", "bash", { command: "GIT push origin main" }, "dangerous")).toBe("ask");
+    expect(out("auto", "bash", { command: "git PUSH" }, "dangerous")).toBe("ask");
+    expect(out("auto", "bash", { command: "GH PR CREATE" }, "dangerous")).toBe("ask");
+  });
+
+  it("auto: recursive/force rm of an absolute path or home always asks a human", () => {
+    for (const command of [
+      "rm -rf /", "rm -rf /*", "rm -rf ~", 'rm -rf "$HOME"', "rm -rf '/'", "rm -rf ${HOME}/x",
+      "rm -rf /etc", "rm -rf /home", "rm --recursive --force /", "rm -R /var", "rm /home -rf", "rm -f /etc/passwd",
+    ]) {
+      expect(out("auto", "bash", { command }, "dangerous")).toBe("ask");
+    }
+    // ordinary / relative dangerous commands still go to the classifier — a
+    // trailing slash on a relative operand must NOT be read as the root `/`.
+    expect(out("auto", "bash", { command: "rm -rf build" }, "dangerous")).toBe("classify");
+    expect(out("auto", "bash", { command: "rm -rf ./tmp" }, "dangerous")).toBe("classify");
+    expect(out("auto", "bash", { command: "rm -rf dist/" }, "dangerous")).toBe("classify");
+    expect(out("auto", "bash", { command: "rm -rf src/ tmp" }, "dangerous")).toBe("classify");
+  });
+
+  it("plan mode blocks a write even when an allow rule matches (only deny overrides plan)", () => {
+    const allowWrite = policyForMode("plan", { allow: compileRuleList(["Write(out.txt)"]), ask: [], deny: [] });
+    expect(decideCall("write_file", { path: "out.txt", content: "x" }, "confirm", allowWrite).outcome).toBe("deny");
+    // a deny rule still wins in plan mode; a safe read with an allow rule still runs
+    const safeRead = policyForMode("plan", { allow: compileRuleList(["Read(a)"]), ask: [], deny: [] });
+    expect(decideCall("read_file", { path: "a" }, "safe", safeRead).outcome).toBe("auto");
+  });
+
+  it("summarizeCall renders a git_push branch (so GitPush(...) rules match)", () => {
+    expect(summarizeCall("git_push", { branch: "main" })).toBe("main");
+  });
+});
+
+describe("decideCall — rules override the mode gate (deny > ask > allow)", () => {
+  const rules = {
+    allow: compileRuleList(["Bash(npm install:*)"]),
+    ask: compileRuleList(["Bash(git status)"]),
+    deny: compileRuleList(["Bash(curl:*)"]),
+  };
+
+  it("deny applies even under bypass", () => {
+    const d = decideCall("bash", { command: "curl http://evil" }, "dangerous", policyForMode("bypass", rules));
+    expect(d.outcome).toBe("deny");
+  });
+
+  it("allow auto-runs a dangerous-classified command in default mode", () => {
+    const d = decideCall("bash", { command: "npm install left-pad" }, "dangerous", policyForMode("default", rules));
+    expect(d.outcome).toBe("auto");
+  });
+
+  it("ask forces a prompt even for a safe-tier command", () => {
+    const d = decideCall("bash", { command: "git status" }, "safe", policyForMode("default", rules));
+    expect(d.outcome).toBe("ask");
+  });
+
+  it("no rule match falls back to the mode gate", () => {
+    expect(decideCall("bash", { command: "ls" }, "safe", policyForMode("default", emptyRules())).outcome).toBe("auto");
   });
 });
