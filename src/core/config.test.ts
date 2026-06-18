@@ -14,7 +14,7 @@ import {
 } from "./config.js";
 
 let dir: string;
-const TOUCHED = ["CFG_FOO", "CFG_BAR", "CFG_SHELL", "COBLE_HOME"] as const;
+const TOUCHED = ["CFG_FOO", "CFG_BAR", "CFG_SHELL", "COBLE_HOME", "COBLE_MODEL", "COBLE_AUTO_MODEL", "COBLE_ALLOWED_DOMAINS"] as const;
 const saved: Record<string, string | undefined> = {};
 
 beforeEach(async () => {
@@ -104,5 +104,24 @@ describe("layered precedence", () => {
     expect(sourceOf("CFG_FOO", project)).toBe("project");
     expect(sourceOf("CFG_BAR", project)).toBe("global");
     expect(sourceOf("CFG_NOPE", project)).toBeUndefined();
+  });
+
+  it("SECURITY: a project .env cannot set COBLE_HOME / COBLE_MODEL / COBLE_AUTO_MODEL / COBLE_ALLOWED_DOMAINS", async () => {
+    const { mkdir, writeFile: wf } = await import("node:fs/promises");
+    process.env.COBLE_HOME = path.join(dir, "emptyhome"); // isolate from the real global ~/.coble/env
+    const project = path.join(dir, "proj2");
+    await mkdir(project, { recursive: true });
+    await wf(
+      path.join(project, ".env"),
+      "COBLE_HOME=/tmp/evil\nCOBLE_MODEL=evil:model\nCOBLE_AUTO_MODEL=evil:model\nCOBLE_ALLOWED_DOMAINS=evil.example\nCFG_FOO=ok\n",
+    );
+    loadLayeredEnv({ cwd: project });
+    // security-relevant keys from the project file are ignored…
+    expect(process.env.COBLE_HOME).not.toBe("/tmp/evil"); // not the project value (stays the shell-set isolation dir)
+    expect(process.env.COBLE_MODEL).toBeUndefined(); // repo can't pick the model (→ auto-mode classifier fallback)
+    expect(process.env.COBLE_AUTO_MODEL).toBeUndefined();
+    expect(process.env.COBLE_ALLOWED_DOMAINS).toBeUndefined();
+    // …but ordinary keys still load
+    expect(process.env.CFG_FOO).toBe("ok");
   });
 });

@@ -67,20 +67,30 @@ export function unsetGlobalConfig(key: string, file: string = globalEnvPath()): 
 export type EnvSource = "shell" | "project" | "global";
 
 /**
+ * Security-relevant keys a PROJECT `.env` must not set — it ships inside the
+ * untrusted repo, so letting it relocate config (COBLE_HOME → repo-controlled
+ * "global" settings), choose the auto-mode classifier (COBLE_AUTO_MODEL), pick
+ * the model — which `auto` mode also falls back to as the classifier
+ * (COBLE_MODEL) — or widen sandbox egress (COBLE_ALLOWED_DOMAINS) would let a
+ * cloned repo self-escalate. These are honored only from the shell or global config.
+ */
+const PROJECT_ENV_DENYLIST = new Set(["COBLE_HOME", "COBLE_MODEL", "COBLE_AUTO_MODEL", "COBLE_ALLOWED_DOMAINS"]);
+
+/**
  * Load configuration into process.env with precedence:
  *   shell env  >  <cwd>/.env  >  ~/.coble/env
- * Earlier sources win — a file never overrides what is already set.
- * The project .env is loaded first so it may set COBLE_HOME and thereby
- * relocate the global file. Provenance, when needed (doctor), is derived
- * by sourceOf() rather than tracked here.
+ * Earlier sources win — a file never overrides what is already set. The project
+ * .env may NOT set security-relevant keys (PROJECT_ENV_DENYLIST); those are read
+ * from the shell or global config only. Provenance, when needed (doctor), is
+ * derived by sourceOf() rather than tracked here.
  */
 export function loadLayeredEnv(opts: { cwd?: string } = {}): void {
-  const apply = (vars: Record<string, string>) => {
+  const apply = (vars: Record<string, string>, deny?: Set<string>) => {
     for (const [k, v] of Object.entries(vars)) {
-      if (process.env[k] === undefined) process.env[k] = v;
+      if (process.env[k] === undefined && !deny?.has(k)) process.env[k] = v;
     }
   };
-  apply(readEnvFile(path.join(opts.cwd ?? process.cwd(), ".env")));
+  apply(readEnvFile(path.join(opts.cwd ?? process.cwd(), ".env")), PROJECT_ENV_DENYLIST);
   apply(readEnvFile(globalEnvPath()));
 }
 
