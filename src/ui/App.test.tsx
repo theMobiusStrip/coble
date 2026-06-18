@@ -76,7 +76,7 @@ describe("App", () => {
     expect(frame).toContain("fake:model"); // status bar
     expect(frame).toContain("15 tok"); // accumulated usage (10 in + 5 out)
 
-    stdin.write("\t"); // → collapsed: tool tree visible
+    stdin.write("\t"); // → compact: tool tree visible
     await tick(50);
     frame = lastFrame() ?? "";
     expect(frame).toContain("Bash(ls)"); // tool tree, prettified name
@@ -126,7 +126,7 @@ describe("App", () => {
     unmount();
   });
 
-  it("tab cycles the tool trail: hidden (default) → collapsed → full → hidden", async () => {
+  it("tab cycles the tool trail: hidden (default) → compact → full → hidden", async () => {
     async function* run(): AsyncGenerator<AgentEvent> {
       yield { type: "tool_start", name: "bash", input: "python3 -c '\nimport os\nprint(1)'", tier: "safe" };
       yield { type: "tool_end", name: "bash", ok: true, output: "l1\nl2\nl3\nl4\nl5\nl6", ms: 5 };
@@ -149,9 +149,10 @@ describe("App", () => {
     expect(frame).not.toContain("Bash(");
     expect(frame).toContain("tools: hidden"); // status bar shows the mode
 
-    stdin.write("\t"); // → collapsed
+    stdin.write("\t"); // → compact
     await tick(50);
     frame = lastFrame() ?? "";
+    expect(frame).toContain("tools: compact"); // status label matches the state (not "collapsed")
     expect(frame).toContain("6 lines (tab to expand)");
     expect(frame).not.toContain("l3");
     expect(frame).toContain("python3 -c ' …"); // multi-line command → first line + ellipsis
@@ -213,7 +214,7 @@ describe("App", () => {
     expect(frame).toContain("auto-approve"); // status bar flag
     expect(frame).not.toContain("✓ auto-approved"); // tool noise hidden by default
 
-    stdin.write("\t"); // → collapsed: auto-approval trail becomes visible
+    stdin.write("\t"); // → compact: auto-approval trail becomes visible
     await tick(50);
     frame = lastFrame() ?? "";
     expect((frame.match(/✓ auto-approved/g) ?? []).length).toBe(2);

@@ -61,8 +61,8 @@ function sandboxLabel(sb: Sandbox | undefined): string | undefined {
 
 type ToolStatus = "running" | "ok" | "fail" | "denied";
 
-/** How much of the tool trail to render. tab cycles hidden → collapsed → full. */
-type ToolDetail = "hidden" | "collapsed" | "full";
+/** How much of the tool trail to render. tab cycles hidden → compact → full. */
+type ToolDetail = "hidden" | "compact" | "full";
 
 type Item =
   | { kind: "user"; text: string }
@@ -302,13 +302,13 @@ export function App({ cwd, policy, modelSpec, initialPrompt, sandbox, classifier
   }, [sandbox]);
 
   // shift+tab cycles the permission mode; plain tab cycles the tool trail
-  // (hidden → collapsed → full). tab (not ctrl+o) because ink-text-input filters
+  // (hidden → compact → full). tab (not ctrl+o) because ink-text-input filters
   // tab but would insert a literal "o" on ctrl+o.
   useInput((_ch, key) => {
     if (key.tab && key.shift) {
       setMode((m) => nextMode(m));
     } else if (key.tab) {
-      setDetail((d) => (d === "hidden" ? "collapsed" : d === "collapsed" ? "full" : "hidden"));
+      setDetail((d) => (d === "hidden" ? "compact" : d === "compact" ? "full" : "hidden"));
     }
   });
 
