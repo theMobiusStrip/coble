@@ -8,6 +8,11 @@ One-sentence version: **the classifier decides whether to ask a human; the OS
 sandbox decides what an approved command can actually touch.** The classifier is
 defense-in-depth, never the boundary.
 
+Here "classifier" means a **deterministic** rule that parses the command string
+(`src/core/approval.ts`) — not an LLM that judges intent. It can't be
+prompt-injected, but it also can't reason about what a command is *for*; that is
+exactly why the OS sandbox, not the classifier, is the boundary.
+
 ## Threat model
 
 **Assets.** Your filesystem and secrets (`~/.ssh`, `~/.aws`, cloud creds), the
@@ -39,7 +44,7 @@ Each answers a *different* question; they are complementary, not redundant.
 
 | Layer | Question | Enforced by | A security boundary? |
 | --- | --- | --- | --- |
-| **Classifier** | "Should we ask the human?" | coble (`src/core/approval.ts`) | **No** — advisory triage, bypassable |
+| **Classifier** | "Should we ask the human?" | coble — deterministic string parse, no model (`src/core/approval.ts`) | **No** — advisory triage, bypassable |
 | **Human gate** | "Should this happen at all?" | `interrupt()` + human (`src/core/graph.ts`) | Yes, for *consent* |
 | **Sandbox** | "What can the command touch?" | OS — Seatbelt / bubblewrap (`src/core/sandbox.ts`) | **Yes** — the real wall |
 | **Spotlighting** | "Is this data or instructions?" | untrusted-data envelope (`src/core/prompts.ts`) | No — injection defense-in-depth |
