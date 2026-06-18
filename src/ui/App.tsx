@@ -2,8 +2,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Box, Text, useApp, useInput } from "ink";
 import TextInput from "ink-text-input";
 import Spinner from "ink-spinner";
+import type { BaseChatModel } from "@langchain/core/language_models/chat_models";
 import { HumanMessage } from "@langchain/core/messages";
-import type { ApprovalPolicy } from "../core/approval.js";
+import { policyForMode, PERMISSION_MODES, type ApprovalPolicy, type PermissionMode } from "../core/approval.js";
 import { setGlobalConfig } from "../core/config.js";
 import { runAgent, type EngineOptions } from "../core/engine.js";
 import type { AgentEvent, PendingCall, TokenUsage } from "../core/events.js";
@@ -44,6 +45,12 @@ export const defaultSetupDeps = {
 
 export type SetupDeps = typeof defaultSetupDeps;
 
+/** Next permission mode in the Shift+Tab cycle. */
+function nextMode(m: PermissionMode): PermissionMode {
+  const i = PERMISSION_MODES.indexOf(m);
+  return PERMISSION_MODES[(i + 1) % PERMISSION_MODES.length] ?? "default";
+}
+
 /** Short footer label for the sandbox; undefined when --sandbox was not set. */
 function sandboxLabel(sb: Sandbox | undefined): string | undefined {
   if (!sb || sb.status === "off") return undefined; // not requested
@@ -71,6 +78,13 @@ export interface AppProps {
   initialPrompt?: string;
   /** OS sandbox confining bash/git (off by default). */
   sandbox?: Sandbox;
+  /** Explicit classifier model for `auto` mode (undefined if none or if it failed
+   *  to resolve). When `autoClassifierConfigured` is false, auto mode falls back
+   *  to the agent model; when true but this is undefined, auto mode fails closed. */
+  classifierModel?: BaseChatModel;
+  /** Whether a separate auto-mode classifier was configured (autoMode.model /
+   *  COBLE_AUTO_MODEL). Gates the fall-back-to-agent-model behavior. */
+  autoClassifierConfigured?: boolean;
   /** Dependency injection for tests. */
   engine?: EngineFn;
   resolver?: (spec?: string) => Promise<ResolvedModel>;
@@ -171,7 +185,7 @@ function isVisible(item: Item, detail: ToolDetail): boolean {
   return true;
 }
 
-export function App({ cwd, policy, modelSpec, initialPrompt, sandbox, engine, resolver, setup }: AppProps) {
+export function App({ cwd, policy, modelSpec, initialPrompt, sandbox, classifierModel, autoClassifierConfigured, engine, resolver, setup }: AppProps) {
   const { exit } = useApp();
   const [input, setInput] = useState(initialPrompt ?? "");
   const [items, setItems] = useState<Item[]>([]);
@@ -183,6 +197,7 @@ export function App({ cwd, policy, modelSpec, initialPrompt, sandbox, engine, re
   const [modelLabel, setModelLabel] = useState<string | undefined>(modelSpec);
   const [detail, setDetail] = useState<ToolDetail>("hidden");
   const [autoApprove, setAutoApprove] = useState(false);
+  const [mode, setMode] = useState<PermissionMode>(policy.mode);
   // Snapshotted because sandbox.active/status are getters that flip during a run.
   const [sbLabel, setSbLabel] = useState<string | undefined>(() => sandboxLabel(sandbox));
   const modelRef = useRef<ResolvedModel | null>(null);
@@ -286,10 +301,13 @@ export function App({ cwd, policy, modelSpec, initialPrompt, sandbox, engine, re
     };
   }, [sandbox]);
 
-  // tab cycles the tool trail: hidden → collapsed → full. tab (not ctrl+o)
-  // because ink-text-input filters tab but would insert a literal "o" on ctrl+o.
+  // shift+tab cycles the permission mode; plain tab cycles the tool trail
+  // (hidden → collapsed → full). tab (not ctrl+o) because ink-text-input filters
+  // tab but would insert a literal "o" on ctrl+o.
   useInput((_ch, key) => {
-    if (key.tab) {
+    if (key.tab && key.shift) {
+      setMode((m) => nextMode(m));
+    } else if (key.tab) {
       setDetail((d) => (d === "hidden" ? "collapsed" : d === "collapsed" ? "full" : "hidden"));
     }
   });
@@ -314,7 +332,18 @@ export function App({ cwd, policy, modelSpec, initialPrompt, sandbox, engine, re
           setModelLabel(modelRef.current.label);
         }
         const { model } = modelRef.current;
-        const run = (engine ?? runAgent)({ prompt, cwd, model, policy, onApproval, sandbox });
+        const run = (engine ?? runAgent)({
+          prompt,
+          cwd,
+          model,
+          policy: policyForMode(mode, policy.rules), // current mode + configured rules
+          onApproval,
+          sandbox,
+          // auto mode: use the configured classifier (or undefined ⇒ fail closed
+          // if it failed to resolve); fall back to the agent model only when no
+          // separate classifier was configured.
+          classifierModel: autoClassifierConfigured ? classifierModel : model,
+        });
         for await (const ev of run) {
           switch (ev.type) {
             case "token":
@@ -384,7 +413,7 @@ export function App({ cwd, policy, modelSpec, initialPrompt, sandbox, engine, re
         setSbLabel(sandboxLabel(sandbox)); // reflect engaged/fell-back state post-run
       }
     },
-    [append, busy, cwd, engine, exit, modelSpec, onApproval, policy, resolver, sandbox],
+    [append, busy, cwd, engine, exit, modelSpec, onApproval, policy, resolver, sandbox, mode, classifierModel, autoClassifierConfigured],
   );
 
   const model = modelLabel ?? "no model";
@@ -456,7 +485,7 @@ export function App({ cwd, policy, modelSpec, initialPrompt, sandbox, engine, re
           <TextInput value={input} onChange={setInput} onSubmit={(v) => void submit(v)} placeholder="task…" />
         </Box>
       )}
-      <StatusBar model={model} usage={usage} autoApprove={autoApprove} toolDetail={detail} sandbox={sbLabel} />
+      <StatusBar model={model} usage={usage} autoApprove={autoApprove} toolDetail={detail} mode={mode} sandbox={sbLabel} />
     </Box>
   );
 }
