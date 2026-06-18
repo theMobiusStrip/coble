@@ -130,9 +130,10 @@ CLI, so a cloned repo cannot self-escalate (mirrors Claude Code).
 ### `auto` mode is model-judged, not a boundary
 
 In `auto` mode a separate **classifier LLM** decides whether a would-prompt call runs,
-instead of asking you. It is shown the task and the agent's intent but **not** tool results
-or file contents (so injected output cannot drive it); `git push`/PR and `rm -rf` of `/` or
-`$HOME` still require a human; a block makes the agent replan. It is convenient but **not a
+instead of asking you. It is shown the task, the agent's intent, and — for a write/edit — the
+agent's own proposed payload (capped, fenced as untrusted), but **not** tool results or file
+contents read from disk (so injected output cannot drive it); `git push`/PR and `rm -rf` of
+`/` or `$HOME` still require a human; a block makes the agent replan. It is convenient but **not a
 security boundary** — it is probabilistic and can be wrong. Pair it with `--sandbox` (the
 OS-enforced boundary). The classifier is configurable (`COBLE_AUTO_MODEL` /
 `settings.permissions.autoMode.model`) and adds one model round-trip per gated call.

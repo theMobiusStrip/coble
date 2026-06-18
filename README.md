@@ -27,18 +27,9 @@ coble config set OPENAI_API_KEY sk-...       # or ANTHROPIC_API_KEY / GOOGLE_API
 # for Google AI as the default:
 # coble config set GOOGLE_API_KEY ...
 # coble config set COBLE_MODEL google:gemini-3.5-flash
-
-# 3. go
-coble -p "count the TODOs in src and summarize them"   # one-shot, headless
-coble                                                  # interactive TUI
 ```
 
 No key yet? Just run `coble` — the TUI opens a **first-run wizard**: pick a provider, paste the key (input hidden), coble validates it with a live request and saves it globally. Verify any setup with `coble doctor`.
-
-```bash
-# fully local — no key, no cloud
-coble -p -m ollama:llama3.1 "explain this repo"
-```
 
 ## Eval results
 
@@ -149,70 +140,50 @@ permissions:
     model: anthropic:claude-haiku-4-5   # classifier for `auto` mode
 ```
 
-## Demos
+## How it works — the trust boundary
 
-The release demo set is three short terminal recordings:
-
-| Demo | Shows |
-| --- | --- |
-| Resume | checkpointed execution survives a killed process and resumes by session id |
-| Approval | dangerous `git push` intent pauses for approval; refusal changes the plan |
-| Repo review | `coble review <repo>` writes `AUDIT.md`, branches, pushes to a local bare remote and prepares a PR in dry-run mode |
-
-The exact recording commands live in [docs/demo-scripts.md](./docs/demo-scripts.md).
-
-## How it works
+The interesting part of coble is what happens to a tool call *before* it runs. The
+LLM is untrusted; every call it proposes crosses one decision point:
 
 ```
-        ┌──────── Ink TUI ────────┐   ┌──── print mode ────┐   ┌── eval runner ──┐
-        └────────────┬────────────┘   └──────────┬─────────┘   └────────┬────────┘
-                     └──────────── AgentEvent stream ───────────────────┘
-                                          │
-                              ┌───────────▼───────────┐
-                              │  Agent core (LangGraph)│
-                              │  agent ⇄ tools loop    │
-                              │  interrupt() approvals │
-                              └─────┬──────────┬───────┘
-                   ┌────────────────┘          └───────────────┐
-        ┌──────────▼─────────┐            ┌────────────────────▼───────────┐
-        │ model layer        │            │ tools: read/write/edit/bash    │
-        │ openai│anthropic│  │            │ + git_branch/commit/push/PR    │
-        │ google│ollama│     │            │ danger tiers · audit log       │
-        │ scripted           │            │                                │
-        └────────────────────┘            └────────────────────────────────┘
-                                          │
-                              ┌───────────▼───────────┐
-                              │ SQLite checkpointer    │
-                              │ sessions · resume      │
-                              └────────────────────────┘
+   model proposes a tool call   ·   read · write · edit · bash · git/PR
+        │
+        ▼
+   decideCall — one gate per call
+        rules   deny → ask → allow      ← ~/.coble (global) + repo .coble/settings.yaml
+        mode    plan · default · careful · auto · bypass   ← --permission-mode / Shift+Tab
+        │
+        ├─ deny  → blocked inline (holds even in bypass)
+        ├─ ask   → human approval via interrupt()
+        ├─ auto  → auto mode: a classifier LLM decides   (git push / PR still ask)
+        └─ allow → runs
+        │ approved
+        ▼
+   run — with --sandbox, inside an OS filesystem jail + default-deny network
+         egress (Seatbelt / bubblewrap) that confines whatever the command does
+        │
+        ▼
+   append-only audit log
 ```
 
-The agent is a LangGraph `StateGraph` with an `agent → tools → agent` loop. The tools node gathers approvals through a single `interrupt()` *before* executing anything (LangGraph re-runs an interrupted node from the top on resume, so no side effect may precede the pause). Persistence is a SQLite checkpointer keyed by session id; resuming invokes the graph with `null` so it continues the thread's pending work.
+Two ideas carry the design. A **deterministic classifier** sorts each command into a
+danger tier (`safe` / `confirm` / `dangerous`) — triage for *whether to ask a human*,
+never the boundary itself. The **OS sandbox** is the boundary: it confines what an
+approved command can reach, however the command is spelled. In between, permission
+**modes** and user `allow` / `ask` / `deny` rules decide what runs unattended, a project
+`.coble/settings.yaml` may only *tighten* (a cloned repo can't grant itself access), and
+untrusted tool output is wrapped in a spotlighting envelope so it can't smuggle
+instructions back to the model. Full threat model and the honest limits of every layer:
+[SECURITY.md](./SECURITY.md).
 
-### Why a framework here?
-
-A bare agent loop is ~40 lines and needs no framework. coble leans on LangGraph specifically for the three things that *are* painful to hand-roll: **durable checkpointing**, **interrupt/resume for human approval**, and an inspectable execution graph. Everything else (tools, model layer, UI) is plain TypeScript talking to provider SDKs.
-
-For a longer architecture write-up, see [docs/blog/architecture.md](./docs/blog/architecture.md).
+Underneath, the loop is a small LangGraph `StateGraph` (`agent → tools → agent`)
+checkpointed to SQLite — so `interrupt()` can pause for approval and a killed run resumes
+from its last step. That durability is deliberately boring infrastructure; the boundary
+above is the part worth reading.
 
 ## Development
 
-```bash
-npm install        # from a clone
-npm run dev        # tsx src/cli.tsx
-npm run typecheck
-npm test           # vitest
-npm run eval       # scripted eval suite
-npm run build
-npm run pack:dry   # inspect the npm package without publishing
-npm run docker:build
-```
-
-All state — sessions, checkpoints, audit log, global config — lives under `COBLE_HOME` (default `~/.coble`), so isolated runs are one env var away:
-
-```bash
-COBLE_HOME=$(mktemp -d) node dist/cli.js doctor --no-ping
-```
+Build, test, local-isolation, and headless/one-shot usage notes live in [DEVELOP.md](./DEVELOP.md).
 
 ## License
 
