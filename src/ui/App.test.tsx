@@ -126,6 +126,22 @@ describe("App", () => {
     unmount();
   });
 
+  it("forwards the audit sink to the engine (interactive runs get recorded)", async () => {
+    let seen: EngineOptions | undefined;
+    const auditSink: EngineOptions["audit"] = () => {};
+    const resolver = async () => ({ model: {} as never, label: "fake:model" });
+    const { stdin, unmount } = render(
+      <App cwd="/tmp" policy={DEFAULT_POLICY} audit={auditSink} engine={(o) => { seen = o; return fakeRun(); }} resolver={resolver} setup={noSetup} />,
+    );
+    await tick();
+    stdin.write("go");
+    await tick();
+    stdin.write("\r");
+    await tick(50);
+    expect(seen?.audit).toBe(auditSink); // the TUI must thread its audit sink through to the engine
+    unmount();
+  });
+
   it("tab cycles the tool trail: hidden (default) → compact → full → hidden", async () => {
     async function* run(): AsyncGenerator<AgentEvent> {
       yield { type: "tool_start", name: "bash", input: "python3 -c '\nimport os\nprint(1)'", tier: "safe" };

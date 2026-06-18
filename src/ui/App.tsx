@@ -85,6 +85,8 @@ export interface AppProps {
   /** Whether a separate auto-mode classifier was configured (autoMode.model /
    *  COBLE_AUTO_MODEL). Gates the fall-back-to-agent-model behavior. */
   autoClassifierConfigured?: boolean;
+  /** Append-only audit sink, wired by the CLI; omitted in tests ⇒ no recording. */
+  audit?: EngineOptions["audit"];
   /** Dependency injection for tests. */
   engine?: EngineFn;
   resolver?: (spec?: string) => Promise<ResolvedModel>;
@@ -185,7 +187,7 @@ function isVisible(item: Item, detail: ToolDetail): boolean {
   return true;
 }
 
-export function App({ cwd, policy, modelSpec, initialPrompt, sandbox, classifierModel, autoClassifierConfigured, engine, resolver, setup }: AppProps) {
+export function App({ cwd, policy, modelSpec, initialPrompt, sandbox, classifierModel, autoClassifierConfigured, audit, engine, resolver, setup }: AppProps) {
   const { exit } = useApp();
   const [input, setInput] = useState(initialPrompt ?? "");
   const [items, setItems] = useState<Item[]>([]);
@@ -339,6 +341,7 @@ export function App({ cwd, policy, modelSpec, initialPrompt, sandbox, classifier
           policy: policyForMode(mode, policy.rules), // current mode + configured rules
           onApproval,
           sandbox,
+          audit, // persist tool decisions to the audit log (omitted in tests)
           // auto mode: use the configured classifier (or undefined ⇒ fail closed
           // if it failed to resolve); fall back to the agent model only when no
           // separate classifier was configured.

@@ -101,7 +101,7 @@ docker run --rm -it \
 | `coble review [path]` | audit a repo → write `AUDIT.md` → branch + commit + PR (dry-run) |
 | `coble sessions` | list sessions with status, steps and estimated cost |
 | `coble resume <id>` | continue a session from its last checkpoint |
-| `coble audit` | show the tool-call audit log |
+| `coble audit` | show the tool-call audit log ([format & demo](./docs/audit-log.md)) |
 | `coble eval [--model spec] [--write]` | run the eval suite |
 
 ### Flags
