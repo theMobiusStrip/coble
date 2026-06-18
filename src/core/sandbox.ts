@@ -37,6 +37,17 @@ export interface Sandbox {
    * Returns undefined when there is nothing to scrub (use the inherited env).
    */
   scrubEnv(): NodeJS.ProcessEnv | undefined;
+  /**
+   * Absolute paths whose contents must never be read. The OS backend enforces
+   * this for subprocesses (bash/git); coble's in-process fs tools consult the
+   * same list so `read_file`/`edit_file` cannot surface a secret (e.g. the
+   * workspace `.env`) that the subprocess deny-read + key scrub are meant to
+   * keep out of reach. This is the static policy, returned whenever `--sandbox`
+   * was requested — independent of whether the OS backend actually engaged, so
+   * the in-process guard holds even where the backend is unavailable. Empty for
+   * the no-op sandbox (no policy requested ⇒ no behavior change).
+   */
+  denyReadPaths(): string[];
 }
 
 export function noopSandbox(): Sandbox {
@@ -47,6 +58,7 @@ export function noopSandbox(): Sandbox {
     active: false,
     status: "off",
     scrubEnv: () => undefined,
+    denyReadPaths: () => [],
   };
 }
 
@@ -99,6 +111,11 @@ export function runtimeSandbox(opts: RuntimeSandboxOptions): Sandbox {
       const env: NodeJS.ProcessEnv = { ...process.env };
       for (const key of opts.envScrub) delete env[key];
       return env;
+    },
+    denyReadPaths() {
+      // Static policy: returned regardless of `engaged` so the in-process fs
+      // guard stays on even when the OS backend fell back to passthrough.
+      return opts.denyRead;
     },
     async init() {
       // Idempotent: in the interactive TUI the same instance is reused across
@@ -206,7 +223,9 @@ export async function buildSandbox(opts: BuildSandboxOptions): Promise<Sandbox> 
   ]);
   // The project-local .env is a documented provider-key source (loadLayeredEnv),
   // so scrubbing keys from the env is pointless unless the file is also
-  // unreadable — otherwise `cat .env` recovers them inside the sandbox.
+  // unreadable — otherwise `cat .env` recovers them inside the sandbox. This
+  // same list is exposed via Sandbox.denyReadPaths() and honored by the
+  // in-process fs tools, so `read_file .env` cannot recover them either.
   const denyRead = [
     ...sandboxDenyReadPaths(),
     path.join(path.resolve(opts.cwd), ".env"),
