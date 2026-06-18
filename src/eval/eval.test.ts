@@ -51,9 +51,9 @@ describe("report", () => {
 });
 
 describe("full scripted suite", () => {
-  it("loads 17 tasks and every one passes in scripted mode", async () => {
+  it("loads 18 tasks and every one passes in scripted mode", async () => {
     const tasks = loadTasks(TASKS_DIR);
-    expect(tasks).toHaveLength(17);
+    expect(tasks).toHaveLength(18);
     const results = await runAll(tasks, scriptedModelFor, Date.now());
     const failed = results.filter((r) => !r.pass);
     expect(failed, JSON.stringify(failed, null, 2)).toHaveLength(0);

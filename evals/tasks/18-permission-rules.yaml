@@ -1,0 +1,21 @@
+id: 18-permission-rules
+description: A deny rule blocks a matching command even when its tier is safe
+prompt: Show me the secret file with cat.
+fixture:
+  files:
+    secret.txt: "TOP SECRET\n"
+mode: default
+rules:
+  deny: ["Bash(cat:*)"]
+script:
+  - content: I'll read it.
+    toolCalls:
+      - name: bash
+        args: { command: "cat secret.txt" }
+  - content: That command is blocked by a deny rule.
+# `cat secret.txt` classifies as "safe" and would auto-run, but the deny rule
+# overrides the mode gate and blocks it — the rule layer is the point.
+assert:
+  - tool_denied: bash
+  - tool_not_called: bash
+  - audit_decision: { tool: bash, decision: denied }
