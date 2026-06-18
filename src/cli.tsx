@@ -155,6 +155,7 @@ withRunFlags(
       allowDomains: opts.allowDomain,
     });
     const auto = await resolveAutoModel(autoModel); // explicit classifier (if any); App falls back to its model only when none is configured
+    const audit = openAuditLog(auditLogPath()); // interactive sessions are auditable too
     render(
       <App
         cwd={cwd}
@@ -164,6 +165,7 @@ withRunFlags(
         sandbox={sandbox}
         classifierModel={auto.model}
         autoClassifierConfigured={auto.configured}
+        audit={audit.record}
       />,
     );
   });

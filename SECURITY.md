@@ -50,7 +50,7 @@ Each answers a *different* question; they are complementary, not redundant.
 | **Auto classifier** | "Should the model auto-approve this?" | a classifier **LLM**, opt-in `auto` mode (`src/core/autoMode.ts`) | **No** — probabilistic, injection-influenceable |
 | **Sandbox** | "What can the command touch?" | OS — Seatbelt / bubblewrap (`src/core/sandbox.ts`) | **Yes** — the real wall |
 | **Spotlighting** | "Is this data or instructions?" | untrusted-data envelope (`src/core/prompts.ts`) | No — injection defense-in-depth |
-| **Audit** | "What happened, and why allowed?" | append-only JSONL (`src/core/audit.ts`) | Yes, for *record* |
+| **Audit** | "What happened, and why allowed?" | append-only JSONL (`src/core/audit.ts`) — [format & demo](./docs/audit-log.md) | Yes, for *record* |
 
 The sandbox sits **under** the approval gate, not instead of it: `tierExceeds` +
 `interrupt()` still decide whether a command runs; the sandbox confines whatever

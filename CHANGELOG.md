@@ -4,6 +4,17 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and the project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.4.1]
+
+### Fixed
+- The interactive TUI now writes to the audit log (`audit.jsonl`) like the headless,
+  `review`, and `resume` paths already did — previously interactive sessions left no
+  audit trail despite a comment claiming otherwise.
+
+### Added
+- `docs/audit-log.md` — what the audit log records, a runnable demo, and how to view it
+  (linked from the README and SECURITY.md).
+
 ## [0.4.0]
 
 TUI key-hint clarity.
