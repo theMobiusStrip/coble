@@ -16,6 +16,7 @@ describe("noopSandbox", () => {
     expect(s.active).toBe(false);
     expect(await s.wrap("rm -rf /")).toBe("rm -rf /");
     expect(s.scrubEnv()).toBeUndefined();
+    expect(s.denyReadPaths()).toEqual([]); // no policy ⇒ fs tools unchanged
     await expect(s.init()).resolves.toBeUndefined();
     await expect(s.dispose()).resolves.toBeUndefined();
   });
@@ -28,6 +29,16 @@ describe("runtimeSandbox (pre-init, no backend side effects)", () => {
     expect(await s.wrap("echo hi")).toBe("echo hi");
     expect(s.scrubEnv()).toBeUndefined(); // nothing scrubbed while inactive
   });
+
+  it("exposes the deny-read policy regardless of engagement (app-level guard)", () => {
+    // denyReadPaths is the *static* policy: it must be readable before init()
+    // and even where the OS backend never engages, so the in-process fs guard
+    // does not silently depend on platform support.
+    const denyRead = ["/home/u/.ssh", "/work/.env"];
+    const s = runtimeSandbox({ cwd: process.cwd(), allowedDomains: [], denyRead, envScrub: [] });
+    expect(s.active).toBe(false);
+    expect(s.denyReadPaths()).toEqual(denyRead);
+  });
 });
 
 describe("buildSandbox", () => {
@@ -35,6 +46,21 @@ describe("buildSandbox", () => {
     const s = await buildSandbox({ cwd: process.cwd(), enabled: false });
     expect(s.active).toBe(false);
     expect(s.status).toBe("off");
+    expect(s.denyReadPaths()).toEqual([]);
+  });
+
+  it("deny-read policy covers the workspace .env files (read tools honor these)", async () => {
+    const cwd = await mkdtemp(path.join(tmpdir(), "coble-sbx-deny-"));
+    try {
+      const s = await buildSandbox({ cwd, enabled: true });
+      const denied = s.denyReadPaths();
+      expect(denied).toContain(path.join(cwd, ".env"));
+      expect(denied).toContain(path.join(cwd, ".env.local"));
+      // and it still carries the credential-store paths from config
+      expect(denied.some((p) => p.endsWith(".ssh"))).toBe(true);
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
   });
 });
 

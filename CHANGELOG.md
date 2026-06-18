@@ -32,6 +32,12 @@ boundary. See [SECURITY.md](./SECURITY.md).
   the deepest existing path component via `lstat`, closing static symlink
   read/write escapes — including dangling symlinks, which `existsSync` silently
   skipped.
+- **Sandbox deny-read now covers the in-process read tools.** The OS deny-read
+  list only bound `bash`/`git` subprocesses, so a model could `read_file('.env')`
+  to pull provider keys into context. `read_file`/`edit_file` now refuse any
+  denied path, matched live by `(device, inode)` identity (catches symlink,
+  hard-link, and case-folded aliases) plus path containment for denied dirs and
+  not-yet-existing paths — mirroring the path-based OS policy.
 
 ### Notes
 - The classifier remains defense-in-depth (it decides whether to ask a human),

@@ -74,7 +74,13 @@ touches.
   `~/.gnupg`, `~/.netrc`, `~/.npmrc`, `~/.git-credentials`, `~/.config/gcloud`,
   `~/.config/gh` (GitHub token), `~/.docker/config.json`, `~/.kube`, and the
   workspace's own `.env` / `.env.local` (a documented provider-key location —
-  otherwise `cat .env` would defeat the env-scrub below).
+  otherwise `cat .env` would defeat the env-scrub below). The same deny-read
+  list is honored by coble's in-process `read_file`/`edit_file`, so a model
+  cannot pull `.env` into context to sidestep the subprocess boundary. Matched
+  live on each read by file identity (device + inode) — catching a symlink, hard
+  link, or case-folded alias of a denied file — plus symlink-resolved path
+  containment for files under a denied directory. Stores outside the workspace are
+  unreachable via the path jail.
 - **Default-deny network egress** — no outbound network unless a host is on the
   allowlist (`--allow-domain`, `COBLE_ALLOWED_DOMAINS`; the `origin` git remote
   is added automatically so an approved push still works). This removes the
@@ -104,6 +110,24 @@ Recommended profile for auditing untrusted code:
   escape), but a link swapped in between check and syscall could still slip
   through; it also only confines coble's *own* fs tools — subprocess writes are
   bounded by `--sandbox`, not this check.
+- **Hard links into a denied *directory* aren't caught.** Deny-read matches a
+  denied file by inode and a denied directory by path containment. A workspace
+  file that is a hard link to a file *inside* a denied directory (e.g.
+  `~/.ssh/id_rsa`) shares the secret's inode but matches neither the directory's
+  inode nor a path under it — and a hard link has no canonical path to resolve
+  back to. The OS sandbox's path-based deny-read shares this blind spot. It is
+  narrow: hard links can't cross filesystems, `git clone` never creates them,
+  and under `--sandbox` the backend makes the denied directory unreachable to
+  the subprocess that would create the link — so the residual is a link planted
+  outside coble beforehand. Keep secrets off the workspace's filesystem if this
+  matters.
+- **Deny-read matches paths/aliases, not relocated content.** Both the in-process
+  guard and the path-based OS backend deny the file and its inode-identical
+  aliases as they currently exist — not a *moved*, *renamed*, *replaced*, or
+  *copied* secret under a new name (`mv .env x` / `cp .env x`, then read `x`). The
+  same bypass is open to a `bash` subprocess (`mv .env x && cat x`), so
+  confidentiality of the bytes rests on default-deny egress (they can't leave) +
+  the key-scrub, not read refusal. Keep egress narrow.
 - **Platform support.** Backend is Seatbelt (macOS) / bubblewrap (Linux, WSL2).
   On unsupported platforms (native Windows) `--sandbox` falls back to classifier
   + gate; `coble doctor` reports this.

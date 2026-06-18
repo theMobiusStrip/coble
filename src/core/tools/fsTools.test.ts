@@ -1,8 +1,9 @@
-import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { link, mkdtemp, mkdir, readFile, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { makeFsTools, resolveInWorkspace } from "./fsTools.js";
+import { runtimeSandbox } from "../sandbox.js";
 
 let cwd: string;
 let tools: ReturnType<typeof makeFsTools>;
@@ -96,6 +97,92 @@ describe("fs tools honor the symlink jail", () => {
     } finally {
       await rm(outside, { recursive: true, force: true });
     }
+  });
+});
+
+describe("fs tools honor the sandbox deny-read policy", () => {
+  // A pre-init runtimeSandbox is a side-effect-free way to attach a deny-read
+  // policy; denyReadPaths() returns it without standing up the OS backend.
+  const withDeny = (denyRead: string[]) =>
+    makeFsTools({ cwd, sandbox: runtimeSandbox({ cwd, allowedDomains: [], denyRead, envScrub: [] }) });
+  const pick = (ts: ReturnType<typeof makeFsTools>, name: string) => {
+    const t = ts.find((t) => t.name === name);
+    if (!t) throw new Error(`missing tool ${name}`);
+    return t;
+  };
+
+  beforeEach(async () => {
+    await writeFile(path.join(cwd, ".env"), "OPENAI_API_KEY=sk-supersecret\n", "utf8");
+  });
+
+  it("read_file refuses a denied in-workspace file (.env)", async () => {
+    const ts = withDeny([path.join(cwd, ".env")]);
+    await expect(pick(ts, "read_file").invoke({ path: ".env" })).rejects.toThrow(/deny-read/);
+  });
+
+  it("edit_file refuses a denied file (its match count is an extraction oracle)", async () => {
+    const ts = withDeny([path.join(cwd, ".env")]);
+    await expect(
+      pick(ts, "edit_file").invoke({ path: ".env", old_string: "sk-", new_string: "x" }),
+    ).rejects.toThrow(/deny-read/);
+  });
+
+  it("cannot be bypassed by an in-workspace symlink alias to the denied file", async () => {
+    // realLocation collapses `alias` to `.env`, so the lexical path differs but
+    // the real target is denied — the guard must still fire.
+    await symlink(path.join(cwd, ".env"), path.join(cwd, "alias"), "file");
+    const ts = withDeny([path.join(cwd, ".env")]);
+    await expect(pick(ts, "read_file").invoke({ path: "alias" })).rejects.toThrow(/deny-read/);
+  });
+
+  it("cannot be bypassed by a hard link to the denied file (same inode)", async () => {
+    // A hard link is a second *real* name for the same inode — realpathSync
+    // cannot resolve it away, so only the (dev, inode) identity check catches it.
+    await link(path.join(cwd, ".env"), path.join(cwd, "hardalias"));
+    const ts = withDeny([path.join(cwd, ".env")]);
+    await expect(pick(ts, "read_file").invoke({ path: "hardalias" })).rejects.toThrow(/deny-read/);
+  });
+
+  it("denies a file nested under a denied directory (containment branch)", async () => {
+    await mkdir(path.join(cwd, "secrets"), { recursive: true });
+    await writeFile(path.join(cwd, "secrets", "key.pem"), "PRIVATE", "utf8");
+    const ts = withDeny([path.join(cwd, "secrets")]);
+    await expect(pick(ts, "read_file").invoke({ path: "secrets/key.pem" })).rejects.toThrow(/deny-read/);
+  });
+
+  it("denies a not-yet-existing denied path before revealing its absence", async () => {
+    // realpathSync throws on the missing path; the lexical fallback must still
+    // match so the guard fires with deny-read rather than a leaky ENOENT.
+    const ts = withDeny([path.join(cwd, "ghost.env")]);
+    await expect(pick(ts, "read_file").invoke({ path: "ghost.env" })).rejects.toThrow(/deny-read/);
+  });
+
+  it("does NOT catch a denied file moved out from under its own name (documented limit)", async () => {
+    // Accepted limitation, matching the path-based OS deny-read: `mv .env env.bak`
+    // then read_file('env.bak') succeeds. The same bypass is open to bash
+    // (`mv .env x && cat x`); egress + key-scrub are the real boundary. SECURITY.md.
+    const ts = withDeny([path.join(cwd, ".env")]);
+    await rename(path.join(cwd, ".env"), path.join(cwd, "env.bak"));
+    expect(await pick(ts, "read_file").invoke({ path: "env.bak" })).toContain("sk-supersecret");
+  });
+
+  it("still reads non-denied files", async () => {
+    await writeFile(path.join(cwd, "ok.txt"), "fine", "utf8");
+    const ts = withDeny([path.join(cwd, ".env")]);
+    expect(await pick(ts, "read_file").invoke({ path: "ok.txt" })).toBe("fine");
+  });
+
+  it("does not gate writes — deny-read is read-only, mirroring the OS policy", async () => {
+    const ts = withDeny([path.join(cwd, ".env")]);
+    const out = await pick(ts, "write_file").invoke({ path: ".env", content: "X=1\n" });
+    expect(String(out)).toContain(".env");
+    // prove the write landed (a deny error would also contain ".env"):
+    expect(await readFile(path.join(cwd, ".env"), "utf8")).toBe("X=1\n");
+  });
+
+  it("no policy (no sandbox) leaves reads unchanged", async () => {
+    const ts = makeFsTools({ cwd }); // no sandbox ⇒ denyReadPaths() absent
+    expect(await pick(ts, "read_file").invoke({ path: ".env" })).toContain("sk-supersecret");
   });
 });
 

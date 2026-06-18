@@ -6,3 +6,4 @@ coverage/
 .DS_Store
 .env
 PLAN.md
+*.code-workspace

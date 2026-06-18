@@ -1,4 +1,4 @@
-import { lstatSync, readlinkSync, realpathSync } from "node:fs";
+import { lstatSync, readlinkSync, realpathSync, statSync } from "node:fs";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { tool, type StructuredToolInterface } from "@langchain/core/tools";
@@ -80,14 +80,71 @@ export function resolveInWorkspace(cwd: string, p: string): string {
 
 export interface ToolContext {
   cwd: string;
-  /** OS sandbox used to confine subprocesses (bash/git). Default: no-op. */
+  /** OS sandbox used to confine subprocesses (bash/git), and whose deny-read
+   *  list the in-process read tools also honor. Default: no-op. */
   sandbox?: Sandbox;
 }
 
+/**
+ * Is `target` a denied file — or nested under a denied directory? Evaluated live
+ * on every read against the current filesystem, so no stale snapshot. Two checks
+ * per denied path `d`:
+ *  - identity (device, inode): `statSync` follows symlinks, so any other name for
+ *    the same currently-existing denied file — hard link, symlink alias, case-fold
+ *    — collapses to the same inode. Path strings can't catch these (`realpathSync`
+ *    doesn't normalize case and can't resolve a hard link).
+ *  - symlink-resolved path containment: the denied path itself, a file under a
+ *    denied directory, and a not-yet-existing denied path (matched lexically, so
+ *    the guard fires before revealing existence).
+ *
+ * Mirrors the OS backend's path-based deny-read. Like it, this does NOT catch a
+ * denied file moved/copied out from under its own name (`mv .env x` then read `x`)
+ * — the same bypass is open to a `bash` subprocess (`mv .env x && cat x`), so
+ * confidentiality of the bytes rests on default-deny egress + the key-scrub. See
+ * SECURITY.md "Honest limitations".
+ */
+function isDeniedRead(target: string, denied: string[]): boolean {
+  if (denied.length === 0) return false;
+  let targetId: { dev: number; ino: number } | undefined;
+  try {
+    const s = statSync(target);
+    targetId = { dev: s.dev, ino: s.ino };
+  } catch {
+    // target absent/unreadable: identity is unavailable, the path leg still runs.
+  }
+  const tid = targetId;
+  const real = realLocation(target);
+  return denied.some((d) => {
+    if (tid) {
+      try {
+        const ds = statSync(d);
+        if (ds.dev === tid.dev && ds.ino === tid.ino) return true;
+      } catch {
+        // denied path absent: fall through to the path comparison.
+      }
+    }
+    const rd = realLocation(d);
+    return real === rd || real.startsWith(rd + path.sep);
+  });
+}
+
 export function makeFsTools(ctx: ToolContext): StructuredToolInterface[] {
+  /** Resolve a path for reading, applying the workspace jail AND the sandbox
+   *  deny-read policy — so the in-process tools cannot surface a secret the OS
+   *  sandbox keeps from subprocesses. The policy is consulted live on each read
+   *  (not snapshotted at build), so it tracks files created mid-run. Used by
+   *  every tool that reads contents. */
+  const resolveForRead = (p: string): string => {
+    const abs = resolveInWorkspace(ctx.cwd, p);
+    if (isDeniedRead(abs, ctx.sandbox?.denyReadPaths() ?? [])) {
+      throw new Error(`reading ${p} is blocked by the sandbox deny-read policy`);
+    }
+    return abs;
+  };
+
   const readFileTool = tool(
     async ({ path: p }: { path: string }) => {
-      const abs = resolveInWorkspace(ctx.cwd, p);
+      const abs = resolveForRead(p);
       const info = await stat(abs);
       if (info.size > MAX_READ_BYTES) {
         const fh = await readFile(abs, { encoding: "utf8" });
@@ -133,7 +190,9 @@ export function makeFsTools(ctx: ToolContext): StructuredToolInterface[] {
       new_string: string;
       replace_all?: boolean;
     }) => {
-      const abs = resolveInWorkspace(ctx.cwd, p);
+      // edit reads the file first (and its match count is an extraction oracle),
+      // so it is gated by the same deny-read policy as read_file.
+      const abs = resolveForRead(p);
       const before = await readFile(abs, "utf8");
       const count = before.split(old_string).length - 1;
       if (count === 0) {
