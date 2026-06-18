@@ -1,7 +1,7 @@
 # ⛵ coble
 
 [![ci](https://github.com/theMobiusStrip/coble/actions/workflows/ci.yml/badge.svg)](https://github.com/theMobiusStrip/coble/actions/workflows/ci.yml)
-[![evals](https://img.shields.io/badge/evals-16%2F16_scripted_%C2%B7_16%2F16_gpt--5.5-brightgreen)](./evals/RESULTS.md)
+[![evals](https://img.shields.io/badge/evals-17%2F17_scripted_%C2%B7_16%2F16_gpt--5.5-brightgreen)](./evals/RESULTS.md)
 [![node](https://img.shields.io/badge/node-%E2%89%A522-339933?logo=node.js&logoColor=white)](./package.json)
 [![license](https://img.shields.io/badge/license-MIT-blue)](./LICENSE)
 [![npm](https://img.shields.io/npm/v/@themobiusstrip/coble)](https://www.npmjs.com/package/@themobiusstrip/coble)
@@ -12,9 +12,9 @@ coble is a small coding agent you run in your own terminal. The point isn't to o
 
 - **🔁 Durable sessions** — every step is checkpointed to SQLite. Kill the process mid-task and `coble resume <id>` continues from the last checkpoint *without re-running completed work*.
 - **🙋 Human-in-the-loop** — dangerous tool calls (arbitrary shell, `git push`, opening a PR) pause the whole graph via LangGraph's `interrupt()` and wait for terminal approval. Approvals survive a crash too.
-- **🛡️ Tiered tool sandbox** — every tool call is classified `safe` / `confirm` / `dangerous`; read-only shell commands run freely, everything else is gated. All calls are written to an append-only audit log.
+- **🛡️ Layered trust boundary** — every tool call is classified `safe` / `confirm` / `dangerous` (read-only shell runs freely, everything else is gated) and written to an append-only audit log. The classifier is defense-in-depth, not the boundary: `--sandbox` adds OS-level isolation (filesystem jail + default-deny network egress, Seatbelt/bubblewrap) that confines what an approved command can actually touch. See [SECURITY.md](./SECURITY.md).
 - **🔌 Provider-agnostic** — one flag switches OpenAI `gpt-5.5`, Anthropic Claude, Google Gemini, or a fully local Ollama model.
-- **🧪 Built-in evals** — 16 fixture-based tasks with outcome assertions, runnable against any model and run deterministically (key-free) in CI.
+- **🧪 Built-in evals** — 17 fixture-based tasks with outcome assertions, runnable against any model and run deterministically (key-free) in CI.
 
 ## Quickstart
 
@@ -42,14 +42,14 @@ coble -p -m ollama:llama3.1 "explain this repo"
 
 ## Eval results
 
-The same 16 tasks run two ways: **scripted** (deterministic, key-free, on every CI push) and against a **real model**. Assertions check task *outcomes* (file contents, branch state, refusals), so they're meaningful across models — the agent reaches them however it likes.
+The tasks run two ways: **scripted** (deterministic, key-free, on every CI push) and against a **real model**. Assertions check task *outcomes* (file contents, branch state, refusals), so they're meaningful across models — the agent reaches them however it likes.
 
 | Suite | Passed | Cost |
 | --- | --- | --- |
-| scripted (CI) | **16/16** | $0 |
+| scripted (CI) | **17/17** | $0 |
 | `openai:gpt-5.5` | **16/16** | ~$0.20 |
 
-See [evals/RESULTS.md](./evals/RESULTS.md) for the per-task table and [`evals/tasks/`](./evals/tasks) for the definitions. Reproduce with `coble eval -m openai:gpt-5.5 --write`.
+Scripted runs every fixture task on each push. The `gpt-5.5` figures are the 2026-06-11 baseline in [evals/RESULTS.md](./evals/RESULTS.md), recorded over the original 16 tasks; reproduce or refresh with `coble eval -m openai:gpt-5.5 --write`. See [`evals/tasks/`](./evals/tasks) for definitions.
 
 > The first real-model run scored 11/16 — not because gpt-5.5 failed the tasks, but because five assertions over-specified the *path* (which tool to use, exact commit wording) instead of the *outcome*. For example, asked to delete everything, gpt-5.5 refused outright rather than attempting the command and being denied. Tightening those assertions to outcome-based — and leaving mechanism guarantees (denial, approval, audit) to the unit tests — is exactly the eval-iteration loop these harnesses exist to drive.
 
@@ -118,6 +118,9 @@ docker run --rm -it \
 - `-m, --model <provider:name>` — `openai:gpt-5.5`, `anthropic:claude-sonnet-4-6`, `google:gemini-3.5-flash`, `ollama:llama3.1`, or `scripted:file.json`
 - `--paranoid` — also require approval for workspace writes
 - `--dangerously-allow` — auto-approve dangerous calls (headless automation)
+- `--sandbox` — confine `bash`/`git` subprocesses in an OS sandbox (filesystem jail + default-deny network egress). Falls back to a warning if the backend is unavailable; recommended for `coble review` over untrusted repos. See [SECURITY.md](./SECURITY.md).
+- `--strict-sandbox` — refuse to run if the sandbox can't engage (implies `--sandbox`)
+- `--allow-domain <host>` — permit a hostname through the egress allowlist under `--sandbox` (repeatable; also `COBLE_ALLOWED_DOMAINS`)
 
 ## Demos
 

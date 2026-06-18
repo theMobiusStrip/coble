@@ -24,7 +24,7 @@ import {
   type ApprovalPolicy,
 } from "./approval.js";
 import type { AgentEvent, PendingCall } from "./events.js";
-import { systemPrompt } from "./prompts.js";
+import { systemPrompt, wrapUntrusted, wrapUntrustedError } from "./prompts.js";
 import { capOutput } from "./tools/bash.js";
 
 export const AgentState = Annotation.Root({
@@ -185,7 +185,13 @@ export function buildGraph(deps: GraphDeps) {
           tier,
           decision: approvedDangerous ? "approved" : "auto",
         });
-        results.push(new ToolMessage({ tool_call_id: callId, name: call.name, content: capOutput(text) }));
+        results.push(
+          new ToolMessage({
+            tool_call_id: callId,
+            name: call.name,
+            content: wrapUntrusted(call.name, capOutput(text)),
+          }),
+        );
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         emit({ type: "tool_end", name: call.name, ok: false, output: message, ms: Date.now() - startedAt });
@@ -194,7 +200,7 @@ export function buildGraph(deps: GraphDeps) {
           new ToolMessage({
             tool_call_id: callId,
             name: call.name,
-            content: `ERROR: ${capOutput(message)}`,
+            content: `ERROR: ${wrapUntrustedError(call.name, capOutput(message))}`,
             status: "error",
           }),
         );

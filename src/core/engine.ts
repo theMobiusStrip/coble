@@ -7,6 +7,7 @@ import { totalUsage } from "./cost.js";
 import type { AgentEvent, PendingCall } from "./events.js";
 import { buildGraph, DEFAULT_MAX_STEPS, type ApprovalRequest, type ApprovalResponse, type AuditEntry } from "./graph.js";
 import { AsyncQueue } from "./queue.js";
+import { noopSandbox, type Sandbox } from "./sandbox.js";
 import { makeCoreTools } from "./tools/index.js";
 
 /** Called when the run pauses for human approval; resolves to per-call decisions. */
@@ -30,6 +31,9 @@ export interface EngineOptions {
   maxSteps?: number;
   audit?: (entry: AuditEntry) => void;
   signal?: AbortSignal;
+  /** OS sandbox confining bash/git subprocesses. Default: no-op passthrough.
+   *  Lifecycle (init/dispose) is owned here, once per run. */
+  sandbox?: Sandbox;
 }
 
 interface InterruptEnvelope {
@@ -75,10 +79,11 @@ export function runAgent(opts: EngineOptions): AsyncIterable<AgentEvent> {
   // interrupt() needs a checkpointer; supply an ephemeral one for interactive
   // runs that didn't bring their own.
   const checkpointer = opts.checkpointer ?? (interactive ? new MemorySaver() : undefined);
+  const sandbox = opts.sandbox ?? noopSandbox();
 
   const app = buildGraph({
     model: opts.model,
-    tools: [...makeCoreTools({ cwd: opts.cwd }), ...(opts.extraTools ?? [])],
+    tools: [...makeCoreTools({ cwd: opts.cwd, sandbox }), ...(opts.extraTools ?? [])],
     policy: opts.policy ?? DEFAULT_POLICY,
     cwd: opts.cwd,
     emit,
@@ -106,6 +111,10 @@ export function runAgent(opts: EngineOptions): AsyncIterable<AgentEvent> {
         return;
       }
 
+      // Stand up the OS boundary once for the whole run (the egress proxy is
+      // expensive to start, so never per-call). dispose() runs in finally.
+      await sandbox.init();
+
       let input: unknown = opts.resume ? null : { messages: [new HumanMessage(opts.prompt ?? "")] };
       let out = await app.invoke(input as never, config);
 
@@ -132,6 +141,11 @@ export function runAgent(opts: EngineOptions): AsyncIterable<AgentEvent> {
         queue.push({ type: "error", message: err instanceof Error ? err.message : String(err) });
       }
       queue.close();
+    } finally {
+      // Headless runs are one-shot, so tear down here. Interactive sessions
+      // reuse the sandbox across prompts (init() is idempotent); the caller
+      // (the TUI) disposes it once on exit, avoiding per-turn proxy churn.
+      if (!interactive) await sandbox.dispose();
     }
   })();
 

@@ -113,6 +113,24 @@ export async function runDoctor(opts: DoctorOptions): Promise<{ results: CheckRe
     }
   }
 
+  // sandbox backend (--sandbox): platform support + OS dependencies
+  try {
+    const { SandboxManager } = await import("@anthropic-ai/sandbox-runtime");
+    if (!SandboxManager.isSupportedPlatform()) {
+      push("sandbox", "warn", `${process.platform} unsupported — --sandbox falls back to classifier + approval`);
+    } else {
+      const deps = SandboxManager.checkDependencies();
+      if (deps.errors.length > 0) {
+        push("sandbox", "warn", `missing: ${deps.errors.join("; ")} — --sandbox will fall back`);
+      } else {
+        const note = deps.warnings.length > 0 ? ` (warnings: ${deps.warnings.join("; ")})` : "";
+        push("sandbox", "ok", `backend ready${note}`);
+      }
+    }
+  } catch (err) {
+    push("sandbox", "warn", `sandbox-runtime unavailable: ${(err instanceof Error ? err.message : String(err)).slice(0, 80)}`);
+  }
+
   // git / gh
   const gitV = await checkBinary("git", ["--version"]);
   push("git", gitV !== null ? "ok" : "warn", gitV ?? "not found (needed for coble review)");

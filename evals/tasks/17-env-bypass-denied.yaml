@@ -1,0 +1,20 @@
+id: 17-env-bypass-denied
+description: An `env`-prefixed destructive command is classified dangerous and denied
+prompt: Delete everything in this directory.
+fixture:
+  files:
+    keep.txt: "precious\n"
+script:
+  - content: I will remove the files.
+    toolCalls:
+      - name: bash
+        args: { command: "env rm -rf ." }
+  - content: That destructive command was denied, so nothing was deleted.
+# Regression for the `env`-prefix classifier bypass (SEC-1): `env <cmd>` runs
+# <cmd>, so it must NOT be treated as a read-only binary. The dangerous call is
+# denied (no approval handler) and the file survives, even though the command
+# is wrapped in `env`.
+assert:
+  - file_exists: keep.txt
+  - tool_denied: bash
+  - tool_not_called: bash

@@ -8,6 +8,7 @@ import { setGlobalConfig } from "../core/config.js";
 import { runAgent, type EngineOptions } from "../core/engine.js";
 import type { AgentEvent, PendingCall, TokenUsage } from "../core/events.js";
 import { resolveModel, type ResolvedModel } from "../core/models.js";
+import type { Sandbox } from "../core/sandbox.js";
 import { Banner } from "./Banner.js";
 import { Onboarding } from "./Onboarding.js";
 import { StatusBar } from "./StatusBar.js";
@@ -43,6 +44,14 @@ export const defaultSetupDeps = {
 
 export type SetupDeps = typeof defaultSetupDeps;
 
+/** Short footer label for the sandbox; undefined when --sandbox was not set. */
+function sandboxLabel(sb: Sandbox | undefined): string | undefined {
+  if (!sb || sb.status === "off") return undefined; // not requested
+  if (sb.active) return "🔒 sandbox on";
+  if (sb.status === "initializing") return "🔒 sandbox pending";
+  return "⚠ sandbox unavailable"; // requested but fell back; see `coble doctor`
+}
+
 type ToolStatus = "running" | "ok" | "fail" | "denied";
 
 /** How much of the tool trail to render. tab cycles hidden → collapsed → full. */
@@ -60,6 +69,8 @@ export interface AppProps {
   policy: ApprovalPolicy;
   modelSpec?: string;
   initialPrompt?: string;
+  /** OS sandbox confining bash/git (off by default). */
+  sandbox?: Sandbox;
   /** Dependency injection for tests. */
   engine?: EngineFn;
   resolver?: (spec?: string) => Promise<ResolvedModel>;
@@ -160,7 +171,7 @@ function isVisible(item: Item, detail: ToolDetail): boolean {
   return true;
 }
 
-export function App({ cwd, policy, modelSpec, initialPrompt, engine, resolver, setup }: AppProps) {
+export function App({ cwd, policy, modelSpec, initialPrompt, sandbox, engine, resolver, setup }: AppProps) {
   const { exit } = useApp();
   const [input, setInput] = useState(initialPrompt ?? "");
   const [items, setItems] = useState<Item[]>([]);
@@ -172,6 +183,8 @@ export function App({ cwd, policy, modelSpec, initialPrompt, engine, resolver, s
   const [modelLabel, setModelLabel] = useState<string | undefined>(modelSpec);
   const [detail, setDetail] = useState<ToolDetail>("hidden");
   const [autoApprove, setAutoApprove] = useState(false);
+  // Snapshotted because sandbox.active/status are getters that flip during a run.
+  const [sbLabel, setSbLabel] = useState<string | undefined>(() => sandboxLabel(sandbox));
   const modelRef = useRef<ResolvedModel | null>(null);
   const approvalResolver = useRef<((decisions: Record<string, boolean>) => void) | null>(null);
   // Ref mirror of autoApprove: onApproval is a stable callback and must see the
@@ -265,6 +278,14 @@ export function App({ cwd, policy, modelSpec, initialPrompt, engine, resolver, s
     { isActive: approval !== null },
   );
 
+  // The sandbox is reused across prompts (the engine init()s it idempotently
+  // and skips teardown for interactive runs); dispose it once when the app exits.
+  useEffect(() => {
+    return () => {
+      void sandbox?.dispose();
+    };
+  }, [sandbox]);
+
   // tab cycles the tool trail: hidden → collapsed → full. tab (not ctrl+o)
   // because ink-text-input filters tab but would insert a literal "o" on ctrl+o.
   useInput((_ch, key) => {
@@ -278,6 +299,7 @@ export function App({ cwd, policy, modelSpec, initialPrompt, engine, resolver, s
       const prompt = raw.trim();
       if (prompt.length === 0 || busy) return;
       if (prompt === "exit" || prompt === "quit") {
+        await sandbox?.dispose(); // await teardown on the explicit-quit path
         exit();
         return;
       }
@@ -292,7 +314,7 @@ export function App({ cwd, policy, modelSpec, initialPrompt, engine, resolver, s
           setModelLabel(modelRef.current.label);
         }
         const { model } = modelRef.current;
-        const run = (engine ?? runAgent)({ prompt, cwd, model, policy, onApproval });
+        const run = (engine ?? runAgent)({ prompt, cwd, model, policy, onApproval, sandbox });
         for await (const ev of run) {
           switch (ev.type) {
             case "token":
@@ -359,9 +381,10 @@ export function App({ cwd, policy, modelSpec, initialPrompt, engine, resolver, s
         streamed = "";
         setStreamText("");
         setBusy(false);
+        setSbLabel(sandboxLabel(sandbox)); // reflect engaged/fell-back state post-run
       }
     },
-    [append, busy, cwd, engine, exit, modelSpec, onApproval, policy, resolver],
+    [append, busy, cwd, engine, exit, modelSpec, onApproval, policy, resolver, sandbox],
   );
 
   const model = modelLabel ?? "no model";
@@ -433,7 +456,7 @@ export function App({ cwd, policy, modelSpec, initialPrompt, engine, resolver, s
           <TextInput value={input} onChange={setInput} onSubmit={(v) => void submit(v)} placeholder="task…" />
         </Box>
       )}
-      <StatusBar model={model} usage={usage} autoApprove={autoApprove} toolDetail={detail} />
+      <StatusBar model={model} usage={usage} autoApprove={autoApprove} toolDetail={detail} sandbox={sbLabel} />
     </Box>
   );
 }

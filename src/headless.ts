@@ -1,6 +1,7 @@
 import type { StructuredToolInterface } from "@langchain/core/tools";
 import type { BaseChatModel } from "@langchain/core/language_models/chat_models";
 import type { ApprovalPolicy } from "./core/approval.js";
+import type { Sandbox } from "./core/sandbox.js";
 import { openAuditLog } from "./core/audit.js";
 import { openCheckpointer } from "./core/checkpointer.js";
 import { formatUsage } from "./core/cost.js";
@@ -18,6 +19,7 @@ export interface HeadlessRun {
   policy: ApprovalPolicy;
   extraTools?: StructuredToolInterface[];
   systemExtra?: string;
+  sandbox?: Sandbox;
 }
 
 /** Create a session, run a task headlessly with persistence + audit, render to stdout. */
@@ -41,6 +43,7 @@ export async function runHeadless(opts: HeadlessRun): Promise<number> {
       audit: audit.record,
       extraTools: opts.extraTools,
       systemExtra: opts.systemExtra,
+      sandbox: opts.sandbox,
     }),
     store,
     session.id,
