@@ -29,6 +29,14 @@ coble config set OPENAI_API_KEY sk-...       # or ANTHROPIC_API_KEY / GOOGLE_API
 # coble config set COBLE_MODEL google:gemini-3.5-flash
 ```
 
+**Alternative — drive coble through a local Anthropic-compatible endpoint** (e.g. [meridian](https://github.com/rynfar/meridian) bridging a Claude Pro/Max subscription, LiteLLM, or any proxy that speaks the Anthropic API). Point the base URL at it; the key can be any non-empty placeholder when the proxy handles auth:
+
+```bash
+ANTHROPIC_BASE_URL=http://127.0.0.1:3456 ANTHROPIC_API_KEY=x COBLE_MODEL=anthropic:claude-opus-4-8 coble
+```
+
+`ANTHROPIC_BASE_URL` is read by the underlying Anthropic SDK, so it works straight from the shell (or a `.env`) with no extra coble config.
+
 No key yet? Just run `coble` — the TUI opens a **first-run wizard**: pick a provider, paste the key (input hidden), coble validates it with a live request and saves it globally. Verify any setup with `coble doctor`.
 
 ## Eval results
