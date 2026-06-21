@@ -10,6 +10,13 @@ export function capOutput(s: string, max = MAX_OUTPUT_CHARS): string {
   return s.length > max ? `${s.slice(0, max)}\n...[truncated ${s.length - max} chars]` : s;
 }
 
+/** The bash tool never throws — it reports a failed/timed-out command by
+ *  prefixing its result with "exit code …" (a successful run returns early).
+ *  Renderers use this to show ✗ instead of a misleading ✓ for such results. */
+export function bashFailed(name: string, output: string): boolean {
+  return name === "bash" && output.startsWith("exit code ");
+}
+
 export function makeBashTool(ctx: ToolContext) {
   return tool(
     async ({ command, timeout_ms }: { command: string; timeout_ms?: number }) => {

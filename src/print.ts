@@ -1,4 +1,5 @@
 import type { AgentEvent } from "./core/events.js";
+import { bashFailed } from "./core/tools/bash.js";
 
 const dim = (s: string) => `\x1b[2m${s}\x1b[0m`;
 const red = (s: string) => `\x1b[31m${s}\x1b[0m`;
@@ -33,9 +34,11 @@ export async function renderPrint(
       case "tool_start":
         console.log(dim(`⚙ ${ev.name}(${ev.input})`));
         break;
-      case "tool_end":
-        console.log(dim(`${ev.ok ? "✓" : "✗"} ${ev.name} ${ev.ok ? "" : "failed "}(${ev.ms}ms)`));
+      case "tool_end": {
+        const ok = ev.ok && !bashFailed(ev.name, ev.output);
+        console.log(dim(`${ok ? "✓" : "✗"} ${ev.name} ${ok ? "" : "failed "}(${ev.ms}ms)`));
         break;
+      }
       case "tool_denied":
         console.log(red(`✗ denied: ${ev.name}(${ev.input}) — ${ev.reason}`));
         break;

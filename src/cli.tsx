@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { writeFileSync } from "node:fs";
+import { existsSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { BaseChatModel } from "@langchain/core/language_models/chat_models";
@@ -54,6 +54,9 @@ interface RunOpts {
  *  --permission-mode > legacy --paranoid/--dangerously-allow > settings.defaultMode. */
 function resolvePermissions(opts: RunOpts, cwd: string): { policy: ApprovalPolicy; autoModel?: string } {
   const settings = loadSettings({ cwd, onWarn: warnStderr });
+  if (opts.dangerouslyAllow && opts.paranoid) {
+    program.error("--paranoid and --dangerously-allow are mutually exclusive (opposite safety intent)");
+  }
   let mode: PermissionMode;
   if (opts.permissionMode !== undefined) {
     if (!(PERMISSION_MODES as readonly string[]).includes(opts.permissionMode)) {
@@ -95,6 +98,7 @@ function classifierFor(auto: { configured: boolean; model?: BaseChatModel }, age
 
 /** Build the OS sandbox from CLI flags. Off (no-op) unless --sandbox is set. */
 function sandboxFrom(opts: RunOpts, cwd: string): Promise<Sandbox> {
+  warnIfAllowDomainWithoutSandbox(opts);
   return buildSandbox({
     cwd,
     enabled: opts.sandbox === true || opts.strictSandbox === true,
@@ -105,6 +109,21 @@ function sandboxFrom(opts: RunOpts, cwd: string): Promise<Sandbox> {
 }
 
 const collectDomain = (v: string, acc: string[]): string[] => acc.concat(v);
+
+/** Fail fast on a typo'd workspace root rather than running against a bad cwd
+ *  and emitting opaque per-tool failures. */
+function assertWorkspace(cwd: string): void {
+  if (!existsSync(cwd)) program.error(`workspace root not found: ${cwd}`);
+  if (!statSync(cwd).isDirectory()) program.error(`workspace root is not a directory: ${cwd}`);
+}
+
+/** --allow-domain only does anything under --sandbox; warn rather than silently
+ *  discard it (the user likely believes egress is being scoped). */
+function warnIfAllowDomainWithoutSandbox(opts: RunOpts): void {
+  if ((opts.allowDomain?.length ?? 0) > 0 && opts.sandbox !== true && opts.strictSandbox !== true) {
+    warnStderr("--allow-domain has no effect without --sandbox; egress is unrestricted");
+  }
+}
 
 /** Permission + sandbox flags shared by the run-capable commands. */
 function withRunFlags(cmd: Command): Command {
@@ -134,6 +153,7 @@ withRunFlags(
   .action(async (promptWords: string[], opts: { print?: boolean; model?: string; cwd: string } & RunOpts) => {
     const prompt = promptWords.join(" ").trim();
     const cwd = path.resolve(opts.cwd);
+    assertWorkspace(cwd);
     loadLayeredEnv({ cwd }); // load env for the workspace: shell > <cwd>/.env > ~/.coble/env
     const { policy, autoModel } = resolvePermissions(opts, cwd);
 
@@ -145,6 +165,14 @@ withRunFlags(
       process.exitCode = await runHeadless({ prompt, cwd, model, modelLabel: label, policy, sandbox, classifierModel });
       return;
     }
+
+    // The interactive TUI needs a real terminal (Ink requires raw-mode stdin).
+    // Without one — piped stdin, or a typo'd subcommand that lands here as a
+    // prompt — fail with guidance instead of a raw framework stack trace.
+    if (!process.stdin.isTTY) {
+      program.error('no interactive terminal detected — use `coble -p "<task>"` for non-interactive runs');
+    }
+    warnIfAllowDomainWithoutSandbox(opts);
 
     // TUI: suppress sandbox warnings to stderr (they would corrupt the Ink
     // render); `coble doctor` reports backend status instead.
@@ -181,15 +209,16 @@ program
 withRunFlags(
   program
     .command("review")
-    .description("audit a repository → AUDIT.md → branch + pull request (dry-run)")
+    .description("audit a repository → AUDIT.md → branch pushed to origin → PR (opened only with --live-pr)")
     .argument("[path]", "repo path", process.cwd())
     .option("-m, --model <spec>", "model as provider:name")
-    .option("--live-pr", "actually open the PR via gh (default: dry-run)"),
+    .option("--live-pr", "open the PR via gh (default: push the audit branch but stop short of opening a PR)"),
 )
   .action(async function (this: Command, repoPath: string) {
     // -m collides with the root command's flag; merge globals to read it.
     const opts = this.optsWithGlobals() as { model?: string; livePr?: boolean } & RunOpts;
     const cwd = path.resolve(repoPath);
+    assertWorkspace(cwd);
     loadLayeredEnv({ cwd }); // load env for the repo path
     const { model, label } = await resolveModel(opts.model);
     const { policy, autoModel } = resolvePermissions(opts, cwd);
@@ -277,6 +306,11 @@ config
       process.exitCode = 1;
       return;
     }
+    if (value.trim() === "") {
+      console.error(`value for ${key} is empty — nothing saved (use \`coble config unset ${key}\` to remove it)`);
+      process.exitCode = 1;
+      return;
+    }
     setGlobalConfig(key, value);
     if (!(KNOWN_KEYS as readonly string[]).includes(key)) {
       console.log(`note: "${key}" is not a key coble reads itself; saving anyway.`);
@@ -333,10 +367,14 @@ config
 program
   .command("audit")
   .description("show the tool-call audit log")
-  .option("-n, --tail <count>", "show only the last N entries", (v) => Number.parseInt(v, 10))
+  .option("-n, --tail <count>", "show only the last N entries", (v) => {
+    const t = v.trim();
+    if (!/^\d+$/.test(t) || Number(t) < 1) program.error(`--tail must be a positive integer (got "${v}")`);
+    return Number(t);
+  })
   .action((opts: { tail?: number }) => {
     const entries = openAuditLog(auditLogPath()).entries();
-    const shown = opts.tail ? entries.slice(-opts.tail) : entries;
+    const shown = opts.tail === undefined ? entries : entries.slice(-opts.tail);
     if (shown.length === 0) {
       console.log("audit log is empty.");
       return;
@@ -357,6 +395,13 @@ withRunFlags(
     const session = store.resolve(id);
     if (session === undefined) {
       program.error(`no session matching "${id}"`);
+      return;
+    }
+    // A completed/errored thread has nothing left to run; resuming it would
+    // re-print the old step/token counts as if work just happened. Only
+    // running/paused sessions reach the agent.
+    if (session.status === "done" || session.status === "error") {
+      console.log(`session ${session.id} is already ${session.status} — nothing to resume`);
       return;
     }
     loadLayeredEnv({ cwd: session.cwd }); // load env for the session's workspace
