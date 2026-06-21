@@ -83,9 +83,11 @@ export async function runDoctor(opts: DoctorOptions): Promise<{ results: CheckRe
     resolved = await resolveModel(undefined);
     push("default model", "ok", resolved.label);
   } catch (err) {
-    const first = (err instanceof Error ? err.message : String(err)).split("\n")[0] ?? "unresolved";
+    // Keep the full multi-line remedy — doctor is exactly where a user wants
+    // the fix steps; renderDoctor indents continuation lines under the column.
+    const detail = err instanceof Error ? err.message : String(err);
     const usingOllama = (process.env.COBLE_MODEL ?? "").startsWith("ollama:");
-    push("default model", anyKey || usingOllama ? "warn" : "fail", first);
+    push("default model", anyKey || usingOllama ? "warn" : "fail", detail);
   }
 
   // ollama reachability (free, fast) — only when pinging
@@ -150,5 +152,8 @@ const GLYPH: Record<CheckStatus, string> = { ok: "\x1b[32m✓\x1b[0m", warn: "\x
 
 export function renderDoctor(results: CheckResult[]): string {
   const width = Math.max(...results.map((r) => r.name.length)) + 2;
-  return results.map((r) => `${GLYPH[r.status]} ${r.name.padEnd(width)}${r.detail}`).join("\n");
+  const indent = " ".repeat(2 + width); // glyph + space + name column
+  return results
+    .map((r) => `${GLYPH[r.status]} ${r.name.padEnd(width)}${r.detail.split("\n").join(`\n${indent}`)}`)
+    .join("\n");
 }

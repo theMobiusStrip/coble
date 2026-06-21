@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { setGlobalConfig } from "./core/config.js";
-import { renderDoctor, runDoctor } from "./doctor.js";
+import { renderDoctor, runDoctor, type CheckResult } from "./doctor.js";
 
 const TOUCHED = ["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GOOGLE_API_KEY", "COBLE_MODEL", "COBLE_HOME", "OLLAMA_HOST"] as const;
 const saved: Record<string, string | undefined> = {};
@@ -86,5 +86,25 @@ describe("doctor", () => {
     const text = renderDoctor(results);
     expect(text).toContain("✓");
     expect(text.split("\n").length).toBe(results.length);
+  });
+
+  // Regression (D1): a multi-line detail (the no-model remedy) must show every
+  // line, with continuation lines indented under the column — not a dangling
+  // "Fix with one of:" followed by nothing.
+  it("indents continuation lines of a multi-line detail", () => {
+    const results: CheckResult[] = [
+      { name: "node", status: "ok", detail: "v22.0.0" },
+      {
+        name: "default model",
+        status: "fail",
+        detail: "no model configured. Fix with one of:\n  coble config set OPENAI_API_KEY <key>\n  coble -m ollama:llama3.1",
+      },
+    ];
+    const text = renderDoctor(results);
+    expect(text).toContain("coble config set OPENAI_API_KEY");
+    expect(text).toContain("coble -m ollama:llama3.1");
+    const cont = text.split("\n").filter((l) => l.includes("coble config set") || l.includes("ollama:llama3.1"));
+    expect(cont).toHaveLength(2);
+    for (const l of cont) expect(l.startsWith("  ")).toBe(true); // indented, not flush-left
   });
 });

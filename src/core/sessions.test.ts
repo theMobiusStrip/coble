@@ -81,4 +81,30 @@ describe("observeSession", () => {
     for await (const _ of observeSession(stream({ type: "interrupted", calls: [] }), store, p.id)) void _;
     expect(store.get(p.id)?.status).toBe("paused");
   });
+
+  // Regression (D10): a session that errored/paused after doing work must
+  // persist the steps + token usage accumulated up to that point, not 0 / none.
+  it("persists steps + usage carried on error and interrupted events", async () => {
+    const store = openSessionStore(file);
+    const e = store.create({ cwd: "/w", model: "m", prompt: "p", nowIso: "2026-06-11T00:00:00Z" });
+    for await (const _ of observeSession(
+      stream({ type: "error", message: "boom mid-run", steps: 1, usage: { inputTokens: 100, outputTokens: 25 } }),
+      store,
+      e.id,
+    ))
+      void _;
+    expect(store.get(e.id)?.status).toBe("error");
+    expect(store.get(e.id)?.steps).toBe(1);
+    expect(store.get(e.id)?.usage).toEqual({ inputTokens: 100, outputTokens: 25 });
+
+    const p = store.create({ cwd: "/w", model: "m", prompt: "p", nowIso: "2026-06-11T00:00:00Z" });
+    for await (const _ of observeSession(
+      stream({ type: "interrupted", calls: [], steps: 3, usage: { inputTokens: 7, outputTokens: 2 } }),
+      store,
+      p.id,
+    ))
+      void _;
+    expect(store.get(p.id)?.steps).toBe(3);
+    expect(store.get(p.id)?.usage.outputTokens).toBe(2);
+  });
 });

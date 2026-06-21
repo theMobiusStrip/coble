@@ -17,10 +17,20 @@ export async function* observeSession(
         store.update(sessionId, { status: "done", steps: ev.steps, usage: ev.usage, updatedAt: new Date().toISOString() });
         break;
       case "error":
-        store.update(sessionId, { status: "error", updatedAt: new Date().toISOString() });
+        store.update(sessionId, {
+          status: "error",
+          updatedAt: new Date().toISOString(),
+          ...(ev.steps !== undefined ? { steps: ev.steps } : {}),
+          ...(ev.usage !== undefined ? { usage: ev.usage } : {}),
+        });
         break;
       case "interrupted":
-        store.update(sessionId, { status: "paused", updatedAt: new Date().toISOString() });
+        store.update(sessionId, {
+          status: "paused",
+          updatedAt: new Date().toISOString(),
+          ...(ev.steps !== undefined ? { steps: ev.steps } : {}),
+          ...(ev.usage !== undefined ? { usage: ev.usage } : {}),
+        });
         break;
       default:
         break;

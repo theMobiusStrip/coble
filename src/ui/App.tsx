@@ -10,6 +10,7 @@ import { runAgent, type EngineOptions } from "../core/engine.js";
 import type { AgentEvent, PendingCall, TokenUsage } from "../core/events.js";
 import { resolveModel, type ResolvedModel } from "../core/models.js";
 import type { Sandbox } from "../core/sandbox.js";
+import { bashFailed } from "../core/tools/bash.js";
 import { Banner } from "./Banner.js";
 import { Onboarding } from "./Onboarding.js";
 import { StatusBar } from "./StatusBar.js";
@@ -367,7 +368,14 @@ export function App({ cwd, policy, modelSpec, initialPrompt, sandbox, classifier
               append({ kind: "tool", name: ev.name, input: ev.input, tier: ev.tier, status: "running" });
               break;
             case "tool_end":
-              setItems((prev) => resolveTool(prev, { status: ev.ok ? "ok" : "fail", result: ev.output, ms: ev.ms }) ?? prev);
+              setItems(
+                (prev) =>
+                  resolveTool(prev, {
+                    status: ev.ok && !bashFailed(ev.name, ev.output) ? "ok" : "fail",
+                    result: ev.output,
+                    ms: ev.ms,
+                  }) ?? prev,
+              );
               break;
             case "tool_denied":
               setItems(

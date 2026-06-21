@@ -4,7 +4,7 @@ import { Command, MemorySaver, type BaseCheckpointSaver } from "@langchain/langg
 import type { StructuredToolInterface } from "@langchain/core/tools";
 import { DEFAULT_POLICY, type ApprovalPolicy } from "./approval.js";
 import { totalUsage } from "./cost.js";
-import type { AgentEvent, PendingCall } from "./events.js";
+import type { AgentEvent, PendingCall, TokenUsage } from "./events.js";
 import { buildGraph, DEFAULT_MAX_STEPS, type ApprovalRequest, type ApprovalResponse, type AuditEntry } from "./graph.js";
 import { AsyncQueue } from "./queue.js";
 import { noopSandbox, type Sandbox } from "./sandbox.js";
@@ -75,7 +75,20 @@ function quickDirectResponse(prompt: string | undefined): string | undefined {
  */
 export function runAgent(opts: EngineOptions): AsyncIterable<AgentEvent> {
   const queue = new AsyncQueue<AgentEvent>();
-  const emit = (e: AgentEvent) => queue.push(e);
+  // Track work accumulated so far so a crash/abort mid-run can still report the
+  // steps + tokens spent up to that point (one model_end == one graph step).
+  let stepsSeen = 0;
+  const usageSeen: TokenUsage = { inputTokens: 0, outputTokens: 0 };
+  const emit = (e: AgentEvent) => {
+    if (e.type === "model_end") {
+      stepsSeen += 1;
+      if (e.usage) {
+        usageSeen.inputTokens += e.usage.inputTokens;
+        usageSeen.outputTokens += e.usage.outputTokens;
+      }
+    }
+    queue.push(e);
+  };
 
   const interactive = opts.onApproval !== undefined;
   // interrupt() needs a checkpointer; supply an ephemeral one for interactive
@@ -139,9 +152,14 @@ export function runAgent(opts: EngineOptions): AsyncIterable<AgentEvent> {
       queue.close();
     } catch (err) {
       if (opts.signal?.aborted) {
-        queue.push({ type: "interrupted", calls: [] });
+        queue.push({ type: "interrupted", calls: [], steps: stepsSeen, usage: { ...usageSeen } });
       } else {
-        queue.push({ type: "error", message: err instanceof Error ? err.message : String(err) });
+        queue.push({
+          type: "error",
+          message: err instanceof Error ? err.message : String(err),
+          steps: stepsSeen,
+          usage: { ...usageSeen },
+        });
       }
       queue.close();
     } finally {

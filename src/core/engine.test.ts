@@ -150,4 +150,22 @@ describe("runAgent end-to-end (scripted model)", () => {
     const events = await collect(runAgent({ prompt: "x", cwd, model, policy: DEFAULT_POLICY }));
     expect(events.at(-1)?.type).toBe("final");
   });
+
+  // Regression (D10): a crash mid-run must report the steps + tokens spent up
+  // to the crash on the error event, not 0 / none.
+  it("carries accumulated steps + usage on a mid-run crash", async () => {
+    const model = new ScriptedChatModel([
+      { content: "working", toolCalls: [{ name: "write_file", args: { path: "a.txt", content: "1" } }] },
+      { crash: "boom mid-run" },
+    ]);
+    const events = await collect(runAgent({ prompt: "crashy", cwd, model, policy: policyForMode("bypass") }));
+    const err = events.at(-1);
+    expect(err?.type).toBe("error");
+    if (err?.type === "error") {
+      expect(err.message).toContain("boom mid-run");
+      expect(err.steps).toBe(1); // first model turn completed before the crash
+      expect(err.usage?.inputTokens).toBe(100); // one scripted turn's usage (100 in / 25 out)
+      expect(err.usage?.outputTokens).toBe(25);
+    }
+  });
 });

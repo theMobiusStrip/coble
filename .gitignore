@@ -8,3 +8,4 @@ coverage/
 PLAN.md
 *.code-workspace
 .claude/
+feature-status.csv

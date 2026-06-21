@@ -16,14 +16,24 @@ export function openAuditLog(filePath: string): AuditLog {
       appendFileSync(filePath, `${JSON.stringify(entry)}\n`, "utf8");
     },
     entries() {
+      let raw: string;
       try {
-        return readFileSync(filePath, "utf8")
-          .split("\n")
-          .filter((l) => l.trim().length > 0)
-          .map((l) => JSON.parse(l) as AuditEntry);
+        raw = readFileSync(filePath, "utf8");
       } catch {
-        return [];
+        return []; // no log file yet
       }
+      // Skip only the unparseable line(s) — a partial last line left by a
+      // crash/disk-full/kill must not discard every valid entry before it.
+      return raw
+        .split("\n")
+        .filter((l) => l.trim().length > 0)
+        .flatMap((l) => {
+          try {
+            return [JSON.parse(l) as AuditEntry];
+          } catch {
+            return [];
+          }
+        });
     },
   };
 }

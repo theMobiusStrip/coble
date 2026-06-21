@@ -1,3 +1,4 @@
+import { appendFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -29,5 +30,19 @@ describe("audit log", () => {
 
   it("returns empty for a missing log", () => {
     expect(openAuditLog(path.join(dir, "absent.jsonl")).entries()).toEqual([]);
+  });
+
+  // Regression (D8): a partial/corrupt last line left by a crash/disk-full/kill
+  // must drop only that line, not discard every valid entry before it.
+  it("skips a corrupt trailing line but keeps the valid entries", () => {
+    const file = path.join(dir, "audit.jsonl");
+    const log = openAuditLog(file);
+    log.record({ ts: "t1", tool: "bash", summary: "ls", tier: "safe", decision: "auto" });
+    log.record({ ts: "t2", tool: "write_file", summary: "a.txt", tier: "confirm", decision: "approved" });
+    appendFileSync(file, '{"ts":"t3","tool":"ba'); // simulate a half-written final line
+
+    const back = openAuditLog(file).entries();
+    expect(back).toHaveLength(2);
+    expect(back.map((e) => e.tool)).toEqual(["bash", "write_file"]);
   });
 });
