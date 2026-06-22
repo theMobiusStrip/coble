@@ -86,7 +86,11 @@ touches.
 - **Default-deny network egress** — no outbound network unless a host is on the
   allowlist (`--allow-domain`, `COBLE_ALLOWED_DOMAINS`; the `origin` git remote
   is added automatically so an approved push still works). This removes the
-  exfiltration leg of the lethal trifecta.
+  exfiltration leg of the lethal trifecta. The in-process web tools
+  (`web_fetch`/`web_search`) do not pass through the subprocess proxy, so they
+  enforce the SAME allowlist themselves (`Sandbox.egressPolicy()`), default-deny
+  under `--sandbox`; both are also `dangerous`-tier (human-approved) and refuse
+  link-local/cloud-metadata IPs (e.g. `169.254.169.254`) in every mode.
 - **Provider-key scrub** — `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` /
   `GOOGLE_API_KEY` are stripped from the subprocess environment, so an approved
   command can't `echo $OPENAI_API_KEY` out.
@@ -144,6 +148,15 @@ OS-enforced boundary). The classifier is configurable (`COBLE_AUTO_MODEL` /
   never fully track shell semantics (`eval`, `xargs`, quoting, locale tricks).
   Known bypass classes are closed and regression-tested (`approval.test.ts`),
   but treat the classifier as triage; `--sandbox` is the boundary.
+- **Web tools widen the egress surface.** `web_fetch`/`web_search` add network
+  reach. They are `dangerous`-tier (approved), allowlist-bound under `--sandbox`,
+  GET-only, and block link-local/metadata IPs by resolved address. Residual gaps:
+  hostname allowlisting permits domain-fronting; there is a DNS-rebinding TOCTOU
+  window between the resolve-time IP check and the connect (same hostname-only
+  weakness as the proxy); loopback/private IPs are *allowed* (local-first, and the
+  call is human-approved); IPv6 ULA metadata endpoints are not enumerated. The OS
+  sandbox + approval gate are the boundary — keep the allowlist narrow and review
+  fetched content as untrusted.
 - **Egress is hostname-only.** The proxy allowlists by hostname; a broad entry
   (e.g. `github.com`) leaves a domain-fronting exfil path. Keep the allowlist
   narrow.

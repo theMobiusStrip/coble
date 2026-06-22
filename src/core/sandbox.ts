@@ -48,6 +48,16 @@ export interface Sandbox {
    * the no-op sandbox (no policy requested ⇒ no behavior change).
    */
   denyReadPaths(): string[];
+  /**
+   * Egress policy for coble's IN-PROCESS network tools (`web_fetch`/`web_search`),
+   * which do not pass through the subprocess egress proxy. `restricted` is true
+   * whenever `--sandbox` was requested (so the tools enforce the same default-deny
+   * hostname allowlist as bash); `allowedDomains` is the permitted host list.
+   * Static policy — returned regardless of whether the OS backend engaged, so the
+   * in-process guard holds even on fallback (mirrors `denyReadPaths`). The no-op
+   * sandbox is unrestricted (matches unsandboxed `bash curl`).
+   */
+  egressPolicy(): { restricted: boolean; allowedDomains: string[] };
 }
 
 export function noopSandbox(): Sandbox {
@@ -59,6 +69,7 @@ export function noopSandbox(): Sandbox {
     status: "off",
     scrubEnv: () => undefined,
     denyReadPaths: () => [],
+    egressPolicy: () => ({ restricted: false, allowedDomains: [] }),
   };
 }
 
@@ -116,6 +127,12 @@ export function runtimeSandbox(opts: RuntimeSandboxOptions): Sandbox {
       // Static policy: returned regardless of `engaged` so the in-process fs
       // guard stays on even when the OS backend fell back to passthrough.
       return opts.denyRead;
+    },
+    egressPolicy() {
+      // Static policy (like denyReadPaths): once --sandbox is requested, the
+      // in-process web tools enforce the same default-deny allowlist even if the
+      // OS backend fell back to passthrough — failing toward "no egress".
+      return { restricted: true, allowedDomains: opts.allowedDomains };
     },
     async init() {
       // Idempotent: in the interactive TUI the same instance is reused across

@@ -186,6 +186,9 @@ export function classifyToolCall(name: string, args: Record<string, unknown>): D
       return "confirm";
     case "bash":
       return classifyBash(String(args.command ?? ""));
+    case "web_fetch":
+    case "web_search":
+      return "dangerous"; // network egress — always gated
     case "git_branch":
     case "git_commit":
     case "git_push":
@@ -206,6 +209,8 @@ export function summarizeCall(name: string, args: Record<string, unknown>): stri
   if (name === "git_commit") return String(args.message ?? "");
   if (name === "git_push") return String(args.branch ?? "");
   if (name === "create_pull_request") return String(args.title ?? "");
+  if (name === "web_fetch") return String(args.url ?? "");
+  if (name === "web_search") return String(args.query ?? "");
   const json = JSON.stringify(args);
   return json.length > 120 ? `${json.slice(0, 120)}…` : json;
 }
