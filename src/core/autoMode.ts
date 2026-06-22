@@ -1,5 +1,6 @@
 import type { BaseChatModel } from "@langchain/core/language_models/chat_models";
 import { HumanMessage, SystemMessage, type BaseMessage } from "@langchain/core/messages";
+import { textFromContent } from "./content.js";
 
 /**
  * Model-judged auto mode: a separate classifier model decides whether a
@@ -33,15 +34,7 @@ ALLOW only actions that are a clearly in-scope step toward the TASK.
 Respond with EXACTLY one line: "ALLOW" or "BLOCK: <short reason>". When uncertain, BLOCK.`;
 
 /** Flatten message content (string or content-block array) to plain text. */
-function textOf(content: unknown): string {
-  if (typeof content === "string") return content;
-  if (Array.isArray(content)) {
-    return content
-      .map((c) => (typeof c === "string" ? c : typeof (c as { text?: string }).text === "string" ? (c as { text: string }).text : ""))
-      .join("");
-  }
-  return "";
-}
+const textOf = textFromContent;
 
 const PAYLOAD_CAP = 2000;
 
