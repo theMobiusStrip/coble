@@ -21,6 +21,7 @@ import { loadContextFile } from "./core/context.js";
 import { formatUsage } from "./core/cost.js";
 import { runAgent } from "./core/engine.js";
 import { resolveModel } from "./core/models.js";
+import { assertHumanInvocation, installPolicy, policyStatus, uninstallPolicy } from "./core/policyInstall.js";
 import { REVIEW_PROMPT } from "./core/prompts.js";
 import { buildSandbox, type Sandbox } from "./core/sandbox.js";
 import { loadSettings } from "./core/settings.js";
@@ -371,6 +372,85 @@ config
   .description("print the global config file path")
   .action(() => {
     console.log(globalEnvPath());
+  });
+
+const policy = program
+  .command("policy")
+  .description("install the agent-security policy block into your AGENTS.md (user-level by default, --project for this repo)");
+
+const scopeWord = (project: boolean) => (project ? "project (this workspace)" : "user-level (every workspace)");
+
+policy
+  .command("install <rendered-policy-file>")
+  .description("write a rendered policy block into AGENTS.md (run this yourself; the full playbook is rejected)")
+  .option("--project", "install into <cwd>/AGENTS.md instead of the user-level ~/.coble/AGENTS.md")
+  .action((file: string, opts: { project?: boolean }) => {
+    try {
+      assertHumanInvocation();
+      const r = installPolicy({ file, project: opts.project, cwd: process.cwd() });
+      console.log(`${r.path}: ${r.status} (v${r.version}) — ${scopeWord(r.project)}`);
+      if (r.status === "refused-downgrade") {
+        console.error("target already holds a newer policy version — refusing to downgrade.");
+        process.exitCode = 1;
+      } else if (r.status === "malformed-target") {
+        console.error("existing markers in the target are malformed — not modified; fix or remove them by hand.");
+        process.exitCode = 1;
+      } else {
+        console.log("loaded into the system prompt on your next coble run.");
+        // Informational only (override is a valid pattern, not an error): flag a
+        // project install that shadows or duplicates an existing user-level block.
+        if (r.project) {
+          const u = policyStatus({ project: false });
+          if (u.installed && u.version === r.version) {
+            console.log("note: a user-level block (same version) already applies everywhere — this project copy is redundant.");
+          } else if (u.installed) {
+            console.log(`note: this project block overrides the user-level policy here (global v${u.version} → project v${r.version}).`);
+          }
+        }
+      }
+    } catch (err) {
+      program.error(err instanceof Error ? err.message : String(err)); // exits; AgentBlockedError.message included
+    }
+  });
+
+const statusLine = (s: ReturnType<typeof policyStatus>) =>
+  s.malformed ? "malformed markers" : s.installed ? `installed (v${s.version})` : "not installed";
+
+policy
+  .command("status")
+  .description("show whether the policy block is installed (both scopes)")
+  .action(() => {
+    try {
+      assertHumanInvocation();
+      const user = policyStatus({ project: false });
+      const proj = policyStatus({ project: true, cwd: process.cwd() });
+      console.log(`user-level  ${user.path}: ${statusLine(user)}`);
+      console.log(`project     ${proj.path}: ${statusLine(proj)}`);
+      if (user.installed && proj.installed) {
+        console.log("note: project loads last, overrides global.");
+      }
+      // Non-zero only when nothing is installed in either scope.
+      if (!user.installed && !proj.installed) process.exitCode = 1;
+    } catch (err) {
+      program.error(err instanceof Error ? err.message : String(err));
+    }
+  });
+
+policy
+  .command("uninstall")
+  .description("remove the policy block, preserving the rest of the file (human-only)")
+  .option("--project", "remove from <cwd>/AGENTS.md instead of the user-level file")
+  .action((opts: { project?: boolean }) => {
+    // Guard and mutation in ONE try so the gate fails closed regardless of
+    // whether program.error exits (e.g. if exitOverride is ever added).
+    try {
+      assertHumanInvocation();
+      const r = uninstallPolicy({ project: opts.project, cwd: process.cwd() });
+      console.log(`${r.path}: ${r.status} — ${scopeWord(r.project)}`);
+      if (r.status !== "removed") process.exitCode = 1;
+    } catch (err) {
+      program.error(err instanceof Error ? err.message : String(err));
+    }
   });
 
 program

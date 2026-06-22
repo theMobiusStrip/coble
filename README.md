@@ -172,11 +172,19 @@ workspace and therefore agent-writable, like `CLAUDE.md`.
 > `coble review` is the exception: it audits an untrusted target and deliberately ignores
 > that target's `AGENTS.md`.
 
-To install a security playbook, copy its contract file in as `AGENTS.md`:
+To install a security playbook, run `coble policy install` with its rendered policy file
+— it writes the managed block into your `AGENTS.md`, in place and idempotently:
 
 ```bash
-cp path/to/agentic-security-playbooks/dist/AGENTS.md ./AGENTS.md
+coble policy install path/to/agentic-security-playbooks/dist/agent-security-policy.md   # user-level (~/.coble/AGENTS.md)
+coble policy install ./agent-security-policy.md --project                               # this repo (<cwd>/AGENTS.md)
+coble policy status      # show both scopes
+coble policy uninstall   # remove the block, keep the rest of the file
 ```
+
+Run it yourself in a terminal — the command is human-only (it refuses agent-driven
+invocation; best-effort, see [SECURITY.md](./SECURITY.md)). It rejects the full playbook
+doc — pass the *rendered* policy (just the block), not the whole document.
 
 ## How it works — the trust boundary
 

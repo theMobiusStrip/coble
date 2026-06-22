@@ -1,6 +1,7 @@
 import { execa } from "execa";
 import { tool } from "@langchain/core/tools";
 import { z } from "zod";
+import { COBLE_AGENT_CHILD } from "../childEnv.js";
 import type { ToolContext } from "./fsTools.js";
 
 const MAX_OUTPUT_CHARS = 16_000;
@@ -25,6 +26,10 @@ export function makeBashTool(ctx: ToolContext) {
       const sandbox = ctx.sandbox;
       const toRun = sandbox?.active ? await sandbox.wrap(command) : command;
       const scrubbed = sandbox?.active ? sandbox.scrubEnv() : undefined;
+      // Mark every agent-spawned subprocess so trusted human-only commands
+      // (`coble policy …`) can refuse when shelled out to by the agent. Set in
+      // both modes: scrubbed env is a full replacement (extendEnv:false), so add
+      // it there too, not just the inherited-env path.
       const res = await execa(toRun, {
         shell: true,
         cwd: ctx.cwd,
@@ -32,7 +37,9 @@ export function makeBashTool(ctx: ToolContext) {
         reject: false,
         all: true,
         stripFinalNewline: false,
-        ...(scrubbed ? { env: scrubbed, extendEnv: false } : {}),
+        ...(scrubbed
+          ? { env: { ...scrubbed, [COBLE_AGENT_CHILD]: "1" }, extendEnv: false }
+          : { env: { [COBLE_AGENT_CHILD]: "1" } }),
       });
       const out = capOutput(res.all ?? "");
       if (res.exitCode === 0) return out.length > 0 ? out : "(no output)";
