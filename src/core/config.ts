@@ -12,6 +12,7 @@ export const KNOWN_KEYS = [
   "OPENAI_API_KEY",
   "ANTHROPIC_API_KEY",
   "GOOGLE_API_KEY",
+  "TAVILY_API_KEY",
   "COBLE_MODEL",
   "OLLAMA_HOST",
 ] as const;
@@ -94,9 +95,14 @@ export function loadLayeredEnv(opts: { cwd?: string } = {}): void {
   apply(readEnvFile(globalEnvPath()));
 }
 
-/** Provider API-key env vars — scrubbed from sandboxed subprocesses so an
- *  approved command cannot exfiltrate them. */
-export const PROVIDER_ENV_KEYS = ["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GOOGLE_API_KEY"] as const;
+/** Model + search provider API-key env vars — scrubbed from sandboxed
+ *  subprocesses so an approved command cannot exfiltrate them. */
+export const PROVIDER_ENV_KEYS = [
+  "OPENAI_API_KEY",
+  "ANTHROPIC_API_KEY",
+  "GOOGLE_API_KEY",
+  "TAVILY_API_KEY",
+] as const;
 
 /**
  * Absolute paths a sandboxed subprocess must not be able to read. Covers

@@ -27,13 +27,15 @@ Rules:
 /** Tools whose *successful* output is untrusted content from outside the trust
  *  boundary (file contents, command output). coble's own structured tools
  *  (git, fs writes) return coble-controlled strings and are left unwrapped. */
-const UNTRUSTED_TOOLS = new Set(["read_file", "bash"]);
+const UNTRUSTED_TOOLS = new Set(["read_file", "bash", "web_fetch", "web_search"]);
 
 /** Tools whose *error* messages can embed untrusted external text — bash/read
- *  output plus git/gh subprocess stderr. */
+ *  output plus git/gh subprocess stderr, and web fetch/search responses. */
 const UNTRUSTED_ERROR_TOOLS = new Set([
   "read_file",
   "bash",
+  "web_fetch",
+  "web_search",
   "git_branch",
   "git_commit",
   "git_push",

@@ -122,6 +122,15 @@ docker run --rm -it \
 - `--strict-sandbox` — refuse to run if the sandbox can't engage (implies `--sandbox`)
 - `--allow-domain <host>` — permit a hostname through the egress allowlist under `--sandbox` (repeatable; also `COBLE_ALLOWED_DOMAINS`)
 
+### Web tools (`web_fetch`, `web_search`)
+
+The agent can reach the network via two `dangerous`-tier tools (so each call is approved, like `bash`):
+
+- `web_fetch <url>` — GET an http(s) URL and return its text. GET-only, redirects re-validated, body capped.
+- `web_search <query>` — search via [Tavily](https://tavily.com); set the key with `coble config set TAVILY_API_KEY <key>` (absent ⇒ the tool says so, no crash).
+
+Both run in coble's main process (not the bash sandbox), so they enforce the boundary themselves: under `--sandbox` the host must be on the egress allowlist (default-deny; add with `--allow-domain`, e.g. `--allow-domain api.tavily.com`), and link-local/cloud-metadata IPs (`169.254.169.254`, …) are refused in every mode. Fetched content is wrapped as untrusted data. See [SECURITY.md](./SECURITY.md).
+
 ### Permission modes & rules
 
 | Mode | Behaviour |
@@ -184,7 +193,7 @@ The interesting part of coble is what happens to a tool call *before* it runs. T
 LLM is untrusted; every call it proposes crosses one decision point:
 
 ```
-   model proposes a tool call   ·   read · write · edit · bash · git/PR
+   model proposes a tool call   ·   read · write · edit · bash · git/PR · web fetch/search
         │
         ▼
    decideCall — one gate per call
