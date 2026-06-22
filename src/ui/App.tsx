@@ -77,6 +77,8 @@ export interface AppProps {
   policy: ApprovalPolicy;
   modelSpec?: string;
   initialPrompt?: string;
+  /** Workspace-root context (AGENTS.md) appended to the system prompt (trusted). */
+  systemExtra?: string;
   /** OS sandbox confining bash/git (off by default). */
   sandbox?: Sandbox;
   /** Explicit classifier model for `auto` mode (undefined if none or if it failed
@@ -188,7 +190,7 @@ function isVisible(item: Item, detail: ToolDetail): boolean {
   return true;
 }
 
-export function App({ cwd, policy, modelSpec, initialPrompt, sandbox, classifierModel, autoClassifierConfigured, audit, engine, resolver, setup }: AppProps) {
+export function App({ cwd, policy, modelSpec, initialPrompt, systemExtra, sandbox, classifierModel, autoClassifierConfigured, audit, engine, resolver, setup }: AppProps) {
   const { exit } = useApp();
   const [input, setInput] = useState(initialPrompt ?? "");
   const [items, setItems] = useState<Item[]>([]);
@@ -340,6 +342,7 @@ export function App({ cwd, policy, modelSpec, initialPrompt, sandbox, classifier
           cwd,
           model,
           policy: policyForMode(mode, policy.rules), // current mode + configured rules
+          systemExtra, // workspace AGENTS.md → system prompt
           onApproval,
           sandbox,
           audit, // persist tool decisions to the audit log (omitted in tests)

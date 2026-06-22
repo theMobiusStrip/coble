@@ -148,6 +148,36 @@ permissions:
     model: anthropic:claude-haiku-4-5   # classifier for `auto` mode
 ```
 
+### Context (`AGENTS.md`)
+
+coble loads two `AGENTS.md` layers into the agent's system prompt at startup, in order —
+same pattern as Claude reading `CLAUDE.md` and Codex reading `AGENTS.md`:
+
+1. **user-level** — `$COBLE_HOME/AGENTS.md` (`~/.coble/AGENTS.md` by default): your global
+   conventions, applied in every workspace.
+2. **project-level** — `<workspace>/AGENTS.md`: this repo only, appended after the global
+   one so project rules build on (and can override) it.
+
+Use them for conventions and guidance. It is **model guidance, not a hard block**: a
+jailbroken agent can ignore it (like any context file). For deterministic enforcement, use
+permission rules above or `--sandbox`.
+
+The user-level file lives in `~/.coble` — outside every workspace and on the sandbox
+deny-read list — so the agent cannot read or overwrite it. The project-level file is in the
+workspace and therefore agent-writable, like `CLAUDE.md`.
+
+> **Trust note:** `AGENTS.md` is loaded into the *trusted* system prompt (not wrapped as
+> untrusted data). Treat it like `CLAUDE.md` — an `AGENTS.md` in a repo you did **not**
+> author becomes trusted instructions, so review one before running coble in a cloned repo.
+> `coble review` is the exception: it audits an untrusted target and deliberately ignores
+> that target's `AGENTS.md`.
+
+To install a security playbook, copy its contract file in as `AGENTS.md`:
+
+```bash
+cp path/to/agentic-security-playbooks/dist/AGENTS.md ./AGENTS.md
+```
+
 ## How it works — the trust boundary
 
 The interesting part of coble is what happens to a tool call *before* it runs. The

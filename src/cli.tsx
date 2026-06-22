@@ -17,6 +17,7 @@ import {
 } from "./core/config.js";
 
 import { openCheckpointer } from "./core/checkpointer.js";
+import { loadContextFile } from "./core/context.js";
 import { formatUsage } from "./core/cost.js";
 import { runAgent } from "./core/engine.js";
 import { resolveModel } from "./core/models.js";
@@ -156,13 +157,14 @@ withRunFlags(
     assertWorkspace(cwd);
     loadLayeredEnv({ cwd }); // load env for the workspace: shell > <cwd>/.env > ~/.coble/env
     const { policy, autoModel } = resolvePermissions(opts, cwd);
+    const context = loadContextFile(cwd); // user-level + workspace AGENTS.md → system prompt (trusted)
 
     if (opts.print) {
       if (prompt.length === 0) program.error('print mode needs a prompt: coble -p "do something"');
       const { model, label } = await resolveModel(opts.model);
       const sandbox = await sandboxFrom(opts, cwd);
       const classifierModel = policy.mode === "auto" ? classifierFor(await resolveAutoModel(autoModel), model) : undefined;
-      process.exitCode = await runHeadless({ prompt, cwd, model, modelLabel: label, policy, sandbox, classifierModel });
+      process.exitCode = await runHeadless({ prompt, cwd, model, modelLabel: label, policy, systemExtra: context, sandbox, classifierModel });
       return;
     }
 
@@ -190,6 +192,7 @@ withRunFlags(
         modelSpec={opts.model}
         policy={policy}
         initialPrompt={prompt.length > 0 ? prompt : undefined}
+        systemExtra={context}
         sandbox={sandbox}
         classifierModel={auto.model}
         autoClassifierConfigured={auto.configured}
@@ -225,6 +228,12 @@ withRunFlags(
     const sandbox = await sandboxFrom(opts, cwd);
     const gitTools = makeGitTools({ cwd, sandbox }, { dryRun: !opts.livePr });
     const classifierModel = policy.mode === "auto" ? classifierFor(await resolveAutoModel(autoModel), model) : undefined;
+    // SECURITY: `review` deliberately does NOT load the target repo's AGENTS.md.
+    // Unlike `coble`/`coble -p` (which run in the user's OWN workspace, where
+    // AGENTS.md is user-authored and trusted), `review`'s target is an UNTRUSTED
+    // repo by definition — promoting its AGENTS.md into the trusted system prompt
+    // would let a hostile repo inject trusted instructions (and review attaches
+    // push/PR tools). Use only coble's own trusted review playbook.
     process.exitCode = await runHeadless({
       prompt: "Audit this repository and open a pull request with your findings.",
       cwd,
