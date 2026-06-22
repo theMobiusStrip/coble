@@ -198,6 +198,16 @@ OS-enforced boundary). The classifier is configurable (`COBLE_AUTO_MODEL` /
   sandbox/egress, deny-read). `coble review` audits an untrusted target and
   therefore does **not** load the target's `AGENTS.md`. Review unfamiliar repos
   before running coble in them, and prefer `--sandbox` for untrusted code.
+- **`coble policy install`'s human-only guard is best-effort.** The command
+  writes the policy block into the user-level `~/.coble/AGENTS.md` (or, with
+  `--project`, the in-workspace `AGENTS.md`). It refuses when it detects the
+  agent-subprocess marker (`COBLE_AGENT_CHILD`) or a non-TTY, but an agent that
+  controls its shell defeats both (`unset` the marker + allocate a PTY), so this
+  is a deterrent, not a wall. The real protections: an agent-issued
+  `coble policy …` is itself a `dangerous`-tier `bash` call that hits the
+  approval gate, and `--sandbox` blocks the out-of-workspace `~/.coble` write at
+  the OS layer. `--project` writes a file the agent can already edit, so it adds
+  no capability. Install the policy yourself in a terminal.
 
 ## Not yet implemented (tracked)
 
