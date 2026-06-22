@@ -177,6 +177,14 @@ OS-enforced boundary). The classifier is configurable (`COBLE_AUTO_MODEL` /
   `<untrusted-data>` envelope helps the model separate data from instructions
   but does not stop a determined injection on its own — pair it with egress
   control.
+- **`AGENTS.md` is a trusted channel.** A workspace-root `AGENTS.md` is loaded
+  into the *system* prompt (not the `<untrusted-data>` envelope) — the same
+  trust posture as `CLAUDE.md`. So an `AGENTS.md` in a repo you did not author
+  becomes trusted instructions; it can steer the model's intent but **cannot**
+  lift any deterministic gate (red-line floor, deny/ask rules, permission mode,
+  sandbox/egress, deny-read). `coble review` audits an untrusted target and
+  therefore does **not** load the target's `AGENTS.md`. Review unfamiliar repos
+  before running coble in them, and prefer `--sandbox` for untrusted code.
 
 ## Not yet implemented (tracked)
 
