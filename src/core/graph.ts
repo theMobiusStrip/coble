@@ -24,6 +24,7 @@ import {
   type ApprovalPolicy,
 } from "./approval.js";
 import { classifyAction } from "./autoMode.js";
+import { textFromContent } from "./content.js";
 import type { AgentEvent, PendingCall } from "./events.js";
 import { systemPrompt, wrapUntrusted, wrapUntrustedError } from "./prompts.js";
 import { capOutput } from "./tools/bash.js";
@@ -86,13 +87,14 @@ export function buildGraph(deps: GraphDeps) {
     const stream = await bound.stream(input, config);
     let response: AIMessageChunk | undefined;
     for await (const chunk of stream) {
-      if (typeof chunk.content === "string" && chunk.content.length > 0) {
-        emit({ type: "token", text: chunk.content });
-      }
+      // content may be a string (OpenAI) or content-block array (Anthropic);
+      // stream the text either way so the UI isn't blank on array-content providers.
+      const delta = textFromContent(chunk.content);
+      if (delta.length > 0) emit({ type: "token", text: delta });
       response = response === undefined ? chunk : concat(response, chunk);
     }
     if (response === undefined) throw new Error("model produced no output");
-    const text = typeof response.content === "string" ? response.content : "";
+    const text = textFromContent(response.content);
     emit({
       type: "model_end",
       text,

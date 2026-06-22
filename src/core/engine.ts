@@ -3,6 +3,7 @@ import type { BaseChatModel } from "@langchain/core/language_models/chat_models"
 import { Command, MemorySaver, type BaseCheckpointSaver } from "@langchain/langgraph";
 import type { StructuredToolInterface } from "@langchain/core/tools";
 import { DEFAULT_POLICY, type ApprovalPolicy } from "./approval.js";
+import { textFromContent } from "./content.js";
 import { totalUsage } from "./cost.js";
 import type { AgentEvent, PendingCall, TokenUsage } from "./events.js";
 import { buildGraph, DEFAULT_MAX_STEPS, type ApprovalRequest, type ApprovalResponse, type AuditEntry } from "./graph.js";
@@ -145,8 +146,7 @@ export function runAgent(opts: EngineOptions): AsyncIterable<AgentEvent> {
       }
 
       const last = out.messages.at(-1);
-      const text =
-        last !== undefined && isAIMessage(last) && typeof last.content === "string" ? last.content : "";
+      const text = last !== undefined && isAIMessage(last) ? textFromContent(last.content) : "";
       const capped = out.steps >= (opts.maxSteps ?? DEFAULT_MAX_STEPS);
       queue.push({ type: "final", text, steps: out.steps, usage: totalUsage(out.messages), capped });
       queue.close();
