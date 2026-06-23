@@ -92,8 +92,8 @@ touches.
   under `--sandbox`; both are also `dangerous`-tier (human-approved) and refuse
   link-local/cloud-metadata IPs (e.g. `169.254.169.254`) in every mode.
 - **Provider-key scrub** — `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` /
-  `GOOGLE_API_KEY` are stripped from the subprocess environment, so an approved
-  command can't `echo $OPENAI_API_KEY` out.
+  `GOOGLE_API_KEY` / `TAVILY_API_KEY` are stripped from the subprocess
+  environment, so an approved command can't `echo $OPENAI_API_KEY` out.
 
 `--strict-sandbox` refuses to run if the backend can't engage (otherwise coble
 warns and falls back to classifier + gate). Run `coble doctor` to see whether the
@@ -190,14 +190,18 @@ OS-enforced boundary). The classifier is configurable (`COBLE_AUTO_MODEL` /
   `<untrusted-data>` envelope helps the model separate data from instructions
   but does not stop a determined injection on its own — pair it with egress
   control.
-- **`AGENTS.md` is a trusted channel.** A workspace-root `AGENTS.md` is loaded
-  into the *system* prompt (not the `<untrusted-data>` envelope) — the same
-  trust posture as `CLAUDE.md`. So an `AGENTS.md` in a repo you did not author
-  becomes trusted instructions; it can steer the model's intent but **cannot**
-  lift any deterministic gate (red-line floor, deny/ask rules, permission mode,
-  sandbox/egress, deny-read). `coble review` audits an untrusted target and
-  therefore does **not** load the target's `AGENTS.md`. Review unfamiliar repos
-  before running coble in them, and prefer `--sandbox` for untrusted code.
+- **`AGENTS.md` is a trusted channel.** `AGENTS.md` is loaded into the *system*
+  prompt (not the `<untrusted-data>` envelope) — the same trust posture as
+  `CLAUDE.md` — across two merged layers: the user-level `$COBLE_HOME/AGENTS.md`
+  (outside every workspace and on the deny-read list, so the agent cannot read or
+  overwrite it even when injected) and the in-workspace `<cwd>/AGENTS.md`
+  (agent-writable, appended last so it can override the global one). So an
+  `AGENTS.md` in a repo you did not author becomes trusted instructions; it can
+  steer the model's intent but **cannot** lift any deterministic gate (deny/ask
+  rules, permission mode, sandbox/egress, deny-read). `coble review` audits an
+  untrusted target and therefore does **not** load the target's `AGENTS.md`.
+  Review unfamiliar repos before running coble in them, and prefer `--sandbox`
+  for untrusted code.
 - **`coble policy install`'s human-only guard is best-effort.** The command
   writes the policy block into the user-level `~/.coble/AGENTS.md` (or, with
   `--project`, the in-workspace `AGENTS.md`). It refuses when it detects the

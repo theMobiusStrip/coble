@@ -4,6 +4,22 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and the project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- **`coble policy install|status|uninstall [--project]`** — human-only command that writes a rendered
+  agent-security policy block into `AGENTS.md` (user-level `~/.coble/AGENTS.md` by default, `--project`
+  for `<cwd>/AGENTS.md`). Rejects the full playbook doc; accepts only the rendered
+  `dist/agent-security-policy.md`. Idempotent in-place; preserves content outside the markers.
+- **Web tools** — `web_fetch` (GET a URL) and `web_search` (Tavily; set `TAVILY_API_KEY` via
+  `coble config set` or the env). `dangerous`-tier (approval-gated); under `--sandbox` they enforce the
+  egress allowlist and refuse link-local/metadata IPs.
+- **Two-layer `AGENTS.md` context** — loaded into the trusted system prompt: user-level
+  `$COBLE_HOME/AGENTS.md` plus project `<cwd>/AGENTS.md` (project appended last, overrides).
+
+### Fixed
+- Render Anthropic array-content answers (previously the final reply could display blank).
+
 ## [0.4.1]
 
 ### Fixed

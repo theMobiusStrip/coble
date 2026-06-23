@@ -1,7 +1,7 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "ink-testing-library";
 import { DEFAULT_POLICY } from "../core/approval.js";
 import { readEnvFile } from "../core/config.js";
@@ -45,6 +45,108 @@ describe("App", () => {
     await tick();
     expect(lastFrame()).toContain("coble");
     expect(lastFrame()).toContain("›"); // bordered input prompt
+    unmount();
+  });
+
+  it("opens a slash-command menu on '/' and tab-completes the selection", async () => {
+    const { lastFrame, stdin, unmount } = render(<App cwd="/tmp" policy={DEFAULT_POLICY} setup={noSetup} />);
+    await tick();
+    stdin.write("/");
+    await tick();
+    let frame = lastFrame() ?? "";
+    expect(frame).toContain("/exit");
+    expect(frame).toContain("/quit");
+    stdin.write("\t"); // complete the highlighted command into the input
+    await tick();
+    frame = lastFrame() ?? "";
+    expect(frame).toContain("› /exit");
+    unmount();
+  });
+
+  it("narrows the menu as you type and reports an unknown slash command", async () => {
+    const { lastFrame, stdin, unmount } = render(<App cwd="/tmp" policy={DEFAULT_POLICY} setup={noSetup} />);
+    await tick();
+    stdin.write("/e");
+    await tick();
+    expect(lastFrame() ?? "").toContain("/exit");
+    expect(lastFrame() ?? "").not.toContain("/quit"); // narrowed
+    stdin.write("".repeat(2) + "/nope"); // clear + type an unknown command
+    await tick();
+    stdin.write("\r");
+    await tick();
+    expect(lastFrame() ?? "").toContain("unknown command");
+    unmount();
+  });
+
+  it("highlights inline `code` commands in assistant output (strips backticks)", async () => {
+    const text = "run `coble policy install` now";
+    const engine = () =>
+      (async function* () {
+        yield { type: "token", text } as AgentEvent;
+        yield { type: "model_end", text, toolCallCount: 0 } as AgentEvent;
+        yield { type: "final", text, steps: 1, usage: { inputTokens: 1, outputTokens: 1 } } as AgentEvent;
+      })();
+    const resolver = async () => ({ model: {} as never, label: "fake:model" });
+    const { lastFrame, stdin, unmount } = render(
+      <App cwd="/tmp" policy={DEFAULT_POLICY} engine={engine} resolver={resolver} setup={noSetup} />,
+    );
+    await tick();
+    stdin.write("go");
+    await tick();
+    stdin.write("\r");
+    await tick(100);
+    const frame = lastFrame() ?? "";
+    expect(frame).toContain("coble policy install"); // command shown
+    expect(frame).not.toContain("`coble policy install`"); // backticks dropped (highlighted span)
+    unmount();
+  });
+
+  it("reuses one checkpointer + thread id across turns (conversation memory)", async () => {
+    const seen: EngineOptions[] = [];
+    const resolver = async () => ({ model: {} as never, label: "fake:model" });
+    const { stdin, unmount } = render(
+      <App cwd="/tmp" policy={DEFAULT_POLICY} engine={(o) => { seen.push(o); return fakeRun(); }} resolver={resolver} setup={noSetup} />,
+    );
+    await tick();
+    stdin.write("first");
+    await tick();
+    stdin.write("\r");
+    await tick(80);
+    stdin.write("second");
+    await tick();
+    stdin.write("\r");
+    await tick(80);
+    expect(seen.length).toBe(2);
+    expect(seen[0]?.threadId).toBeTruthy(); // a stable thread, not the "oneshot" default
+    expect(seen[0]?.checkpointer).toBeDefined();
+    expect(seen[1]?.threadId).toBe(seen[0]?.threadId); // same thread across turns → memory
+    expect(seen[1]?.checkpointer).toBe(seen[0]?.checkpointer); // same checkpointer instance
+    unmount();
+  });
+
+  it("'/exit' tears down the sandbox and quits without running a task", async () => {
+    const dispose = vi.fn(async () => {});
+    const sandbox = {
+      init: async () => {},
+      wrap: async (c: string) => c,
+      dispose,
+      active: false,
+      status: "",
+      scrubEnv: () => undefined,
+      denyReadPaths: () => [],
+      egressPolicy: () => ({ restricted: false, allowedDomains: [] }),
+    };
+    const engine = vi.fn(() => fakeRun());
+    const { stdin, unmount } = render(
+      <App cwd="/tmp" policy={DEFAULT_POLICY} engine={engine} sandbox={sandbox as never} setup={noSetup} />,
+    );
+    await tick();
+    stdin.write("/exit");
+    await tick();
+    stdin.write("\r");
+    await tick(50);
+    expect(dispose).toHaveBeenCalled(); // quit path ran
+    expect(engine).not.toHaveBeenCalled(); // not forwarded to the agent as a task
     unmount();
   });
 

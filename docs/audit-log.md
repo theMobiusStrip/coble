@@ -15,7 +15,7 @@ One entry per tool call, written the moment it runs, is denied, or errors — ac
 | Field | Meaning |
 | --- | --- |
 | `ts` | ISO-8601 timestamp |
-| `tool` | tool name — `bash`, `read_file`, `write_file`, `edit_file`, `git_push`, … |
+| `tool` | tool name — `bash`, `read_file`, `write_file`, `edit_file`, `web_fetch`, `web_search`, `git_push`, … |
 | `summary` | one-line command / path / PR title (never file contents) |
 | `tier` | danger tier: `safe` · `confirm` · `dangerous` |
 | `decision` | `auto` (ran, no prompt) · `approved` (you approved) · `denied` (blocked or refused) · `error` (the tool threw) |

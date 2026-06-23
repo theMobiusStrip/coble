@@ -70,6 +70,7 @@ Keys coble reads:
 - `OPENAI_API_KEY` — [create one](https://platform.openai.com/api-keys)
 - `ANTHROPIC_API_KEY` — [create one](https://console.anthropic.com/settings/keys)
 - `GOOGLE_API_KEY` — [create one](https://aistudio.google.com/app/apikey); free-tier keys have tight per-day request quotas, and an agent task makes several requests, so expect 429s unless billing is enabled
+- `TAVILY_API_KEY` — key for the `web_search` tool ([Tavily](https://tavily.com)); absent ⇒ `web_search` reports it's unconfigured (no crash)
 - `COBLE_MODEL` — default model when `-m` is omitted, e.g. `openai:gpt-5.5` or `google:gemini-3.5-flash`
 - `OLLAMA_HOST` — remote/Docker Ollama endpoint (default `http://localhost:11434`)
 - `COBLE_HOME` — state directory (sessions, checkpoints, audit log, global config; default `~/.coble`)
@@ -105,6 +106,7 @@ docker run --rm -it \
 | --- | --- |
 | `coble [task]` | interactive TUI (or one-shot with `-p`) |
 | `coble config set/get/list/unset/path` | manage global config — keys, default model |
+| `coble policy install/status/uninstall [--project]` | install the security-policy block into `AGENTS.md` (user-level, or `--project`); human-only |
 | `coble doctor [--no-ping]` | check setup: keys, model, connectivity, git/gh |
 | `coble review [path]` | audit a repo → write `AUDIT.md` → branch + commit + PR (dry-run) |
 | `coble sessions` | list sessions with status, steps and estimated cost |
@@ -115,6 +117,8 @@ docker run --rm -it \
 ### Flags
 
 - `-m, --model <provider:name>` — `openai:gpt-5.5`, `anthropic:claude-sonnet-4-6`, `google:gemini-3.5-flash`, `ollama:llama3.1`, or `scripted:file.json`
+- `-C, --cwd <dir>` — workspace root for this run (default: current directory)
+- `-p, --print` — non-interactive: run one task, print events, exit
 - `--permission-mode <mode>` — `plan` (read-only), `default`, `careful`, `auto` (model-judged), or `bypass`. In the TUI, **Shift+Tab** cycles modes. `--paranoid` and `--dangerously-allow` are aliases for `careful` and `bypass`.
 - `--paranoid` — also require approval for workspace writes (alias for `--permission-mode careful`)
 - `--dangerously-allow` — auto-approve dangerous calls (alias for `--permission-mode bypass`)

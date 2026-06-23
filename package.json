@@ -1,6 +1,6 @@
 {
   "name": "@themobiusstrip/coble",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "description": "A local, provider-agnostic agent CLI — LangGraph.js core, Ink TUI, durable sessions, human-in-the-loop approvals, built-in evals.",
   "type": "module",
   "license": "MIT",
@@ -13,6 +13,10 @@
     "url": "https://github.com/theMobiusStrip/coble/issues"
   },
   "homepage": "https://github.com/theMobiusStrip/coble#readme",
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
   "keywords": [
     "agent",
     "cli",
