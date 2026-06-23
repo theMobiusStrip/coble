@@ -15,7 +15,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          registry-url: https://registry.npmjs.org
-      - run: npm install -g npm@latest   # OIDC needs npm >= 11.5.1
+          # No registry-url: it makes setup-node write an .npmrc with a placeholder
+          # `_authToken`, which sends npm down token auth (rejected under "disallow
+          # tokens" → 404). Omitting it lets npm use OIDC against the default registry.
+      - run: npm install -g npm@latest   # OIDC trusted publishing needs npm >= 11.5.1
       - run: npm ci
       - run: npm publish                 # prepublishOnly runs the gate
