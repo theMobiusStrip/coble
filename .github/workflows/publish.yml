@@ -3,6 +3,7 @@ name: publish
 on:
   release:
     types: [published]
+  workflow_dispatch: {}   # allow manual re-run from the Actions tab
 
 jobs:
   publish:
@@ -19,5 +20,6 @@ jobs:
           # `_authToken`, which sends npm down token auth (rejected under "disallow
           # tokens" → 404). Omitting it lets npm use OIDC against the default registry.
       - run: npm install -g npm@latest   # OIDC trusted publishing needs npm >= 11.5.1
+      - run: node -v && npm -v           # diagnostic: confirm npm >= 11.5.1 at publish time
       - run: npm ci
       - run: npm publish                 # prepublishOnly runs the gate
