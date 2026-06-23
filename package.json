@@ -13,6 +13,10 @@
     "url": "https://github.com/theMobiusStrip/coble/issues"
   },
   "homepage": "https://github.com/theMobiusStrip/coble#readme",
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
   "keywords": [
     "agent",
     "cli",
