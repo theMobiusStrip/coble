@@ -1,5 +1,7 @@
+import { randomUUID } from "node:crypto";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Box, Text, useApp, useInput } from "ink";
+import { MemorySaver } from "@langchain/langgraph";
 import TextInput from "ink-text-input";
 import Spinner from "ink-spinner";
 import type { BaseChatModel } from "@langchain/core/language_models/chat_models";
@@ -58,6 +60,23 @@ function sandboxLabel(sb: Sandbox | undefined): string | undefined {
   if (sb.active) return "🔒 sandbox on";
   if (sb.status === "initializing") return "🔒 sandbox pending";
   return "⚠ sandbox unavailable"; // requested but fell back; see `coble doctor`
+}
+
+/** Slash commands offered by the input autocomplete (typing `/` opens a menu). */
+const SLASH_COMMANDS = [
+  { name: "/exit", desc: "leave coble" },
+  { name: "/quit", desc: "leave coble" },
+] as const;
+
+/** Inputs that end the session (bare or slash-prefixed, case-insensitive). */
+const QUIT_INPUTS = new Set(["exit", "quit", "/exit", "/quit"]);
+
+/** Slash commands whose name starts with the current input — empty unless the
+ *  input begins with "/". Drives the autocomplete menu. */
+export function slashMatches(input: string): { name: string; desc: string }[] {
+  const q = input.trim().toLowerCase();
+  if (!q.startsWith("/")) return [];
+  return SLASH_COMMANDS.filter((c) => c.name.startsWith(q));
 }
 
 type ToolStatus = "running" | "ok" | "fail" | "denied";
@@ -159,6 +178,21 @@ function ToolView({ item, detail }: { item: Extract<Item, { kind: "tool" }>; det
   );
 }
 
+/** Render assistant text with inline `code` / command spans highlighted: drop the
+ *  backticks and color the span so commands (e.g. `coble policy install …`) stand
+ *  out from prose. */
+function highlightCode(text: string) {
+  return text.split(/(`[^`]+`)/g).map((part, i) =>
+    part.length > 1 && part.startsWith("`") && part.endsWith("`") ? (
+      <Text key={i} bold color="yellow">
+        {part.slice(1, -1)}
+      </Text>
+    ) : (
+      <Text key={i}>{part}</Text>
+    ),
+  );
+}
+
 function MessageView({ item, detail }: { item: Item; detail: ToolDetail }) {
   switch (item.kind) {
     case "user":
@@ -166,7 +200,7 @@ function MessageView({ item, detail }: { item: Item; detail: ToolDetail }) {
     case "assistant":
       return (
         <Text>
-          <Text color="cyan">⏺</Text> {item.text}
+          <Text color="cyan">⏺</Text> {highlightCode(item.text)}
         </Text>
       );
     case "tool":
@@ -193,6 +227,7 @@ function isVisible(item: Item, detail: ToolDetail): boolean {
 export function App({ cwd, policy, modelSpec, initialPrompt, systemExtra, sandbox, classifierModel, autoClassifierConfigured, audit, engine, resolver, setup }: AppProps) {
   const { exit } = useApp();
   const [input, setInput] = useState(initialPrompt ?? "");
+  const [menuIdx, setMenuIdx] = useState(0); // highlighted slash-command in the autocomplete menu
   const [items, setItems] = useState<Item[]>([]);
   const [streamText, setStreamText] = useState("");
   const [busy, setBusy] = useState(false);
@@ -206,6 +241,11 @@ export function App({ cwd, policy, modelSpec, initialPrompt, systemExtra, sandbo
   // Snapshotted because sandbox.active/status are getters that flip during a run.
   const [sbLabel, setSbLabel] = useState<string | undefined>(() => sandboxLabel(sandbox));
   const modelRef = useRef<ResolvedModel | null>(null);
+  // One checkpointer + thread for the whole interactive session, so each turn
+  // resumes the same thread and the model sees the prior conversation (without
+  // these, every prompt started a fresh thread → no memory between turns).
+  const [threadId] = useState(() => `tui-${randomUUID()}`);
+  const [checkpointer] = useState(() => new MemorySaver());
   const approvalResolver = useRef<((decisions: Record<string, boolean>) => void) | null>(null);
   // Ref mirror of autoApprove: onApproval is a stable callback and must see the
   // current value, not the one captured at creation.
@@ -310,6 +350,18 @@ export function App({ cwd, policy, modelSpec, initialPrompt, systemExtra, sandbo
   // (hidden → compact → full). tab (not ctrl+o) because ink-text-input filters
   // tab but would insert a literal "o" on ctrl+o.
   useInput((_ch, key) => {
+    // When the slash-command menu is open, ↑/↓ navigate and tab completes the
+    // highlighted command; Enter falls through to TextInput's onSubmit.
+    const menu = slashMatches(input);
+    if (menu.length > 0 && !key.shift) {
+      if (key.upArrow) return setMenuIdx((i) => (i - 1 + menu.length) % menu.length);
+      if (key.downArrow) return setMenuIdx((i) => (i + 1) % menu.length);
+      if (key.tab) {
+        setInput(menu[Math.min(menuIdx, menu.length - 1)]!.name);
+        setMenuIdx(0);
+        return;
+      }
+    }
     if (key.tab && key.shift) {
       setMode((m) => nextMode(m));
     } else if (key.tab) {
@@ -321,9 +373,16 @@ export function App({ cwd, policy, modelSpec, initialPrompt, systemExtra, sandbo
     async (raw: string) => {
       const prompt = raw.trim();
       if (prompt.length === 0 || busy) return;
-      if (prompt === "exit" || prompt === "quit") {
+      if (QUIT_INPUTS.has(prompt.toLowerCase())) {
         await sandbox?.dispose(); // await teardown on the explicit-quit path
         exit();
+        return;
+      }
+      if (prompt.startsWith("/")) {
+        // Unknown slash command — don't forward a mistyped command to the agent.
+        setInput("");
+        setMenuIdx(0);
+        append({ kind: "info", text: `unknown command: ${prompt} · try ${SLASH_COMMANDS.map((c) => c.name).join(", ")}` });
         return;
       }
       setInput("");
@@ -343,6 +402,8 @@ export function App({ cwd, policy, modelSpec, initialPrompt, systemExtra, sandbo
           model,
           policy: policyForMode(mode, policy.rules), // current mode + configured rules
           systemExtra, // workspace AGENTS.md → system prompt
+          checkpointer, // stable across turns → conversation memory within the session
+          threadId,
           onApproval,
           sandbox,
           audit, // persist tool decisions to the audit log (omitted in tests)
@@ -470,7 +531,7 @@ export function App({ cwd, policy, modelSpec, initialPrompt, systemExtra, sandbo
       ))}
       {streamText.length > 0 ? (
         <Text>
-          <Text color="cyan">⏺</Text> {streamText}
+          <Text color="cyan">⏺</Text> {highlightCode(streamText)}
         </Text>
       ) : null}
       {approval !== null ? (
@@ -494,9 +555,29 @@ export function App({ cwd, policy, modelSpec, initialPrompt, systemExtra, sandbo
           <Spinner type="dots" /> working…
         </Text>
       ) : (
-        <Box borderStyle="round" borderColor="gray" paddingX={1}>
-          <Text color="green">{"› "}</Text>
-          <TextInput value={input} onChange={setInput} onSubmit={(v) => void submit(v)} placeholder="task…" />
+        <Box flexDirection="column">
+          <Box borderStyle="round" borderColor="gray" paddingX={1}>
+            <Text color="green">{"› "}</Text>
+            <TextInput
+              value={input}
+              onChange={(v) => {
+                setInput(v);
+                setMenuIdx(0);
+              }}
+              onSubmit={(v) => void submit(v)}
+              placeholder="task…"
+            />
+          </Box>
+          {(() => {
+            const menu = slashMatches(input);
+            if (menu.length === 0) return null;
+            const sel = Math.min(menuIdx, menu.length - 1);
+            return menu.map((c, i) => (
+              <Text key={c.name} color={i === sel ? "cyan" : undefined} dimColor={i !== sel}>
+                {`  ${i === sel ? "▸" : " "} ${c.name}  ${c.desc}`}
+              </Text>
+            ));
+          })()}
         </Box>
       )}
       <StatusBar model={model} usage={usage} autoApprove={autoApprove} toolDetail={detail} mode={mode} sandbox={sbLabel} />

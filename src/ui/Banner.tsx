@@ -11,47 +11,48 @@ export interface BannerProps {
   notes?: string[];
 }
 
-// A little fishing boat (a "coble") in block elements — all guaranteed
-// single-width (U+2580–U+259F) so the columns stay aligned everywhere.
-const LOGO = ["  ▟█▙  ", " ▟███▙ ", "▟█████▙", "▀▀▀▀▀▀▀"];
-
 const DEFAULT_TIPS = [
   "shell & git actions pause for your approval",
-  "shift+tab cycles permission mode (plan/default/careful/auto/bypass)",
-  'tab cycles tool detail (hidden/compact/full) · "exit" to quit · ctrl+c to cancel',
+  "shift+tab cycles permission mode · tab cycles tool detail",
+  'type / for commands · "exit" or ctrl+c to quit',
 ];
+
+/** Pad a row label so values line up under each other. */
+const label = (s: string) => `${s}`.padEnd(6);
 
 export function Banner({ cwd, model, hint, notes }: BannerProps) {
   const tips = hint ? [hint] : DEFAULT_TIPS;
   return (
     <Box flexDirection="column" marginBottom={1}>
-      <Box>
-        <Box flexDirection="column" marginRight={2}>
-          {LOGO.map((line, i) => (
-            <Text key={i} color="cyan" bold>
-              {line}
-            </Text>
-          ))}
-        </Box>
-        <Box flexDirection="column">
-          <Text>
-            <Text bold color="cyan">
-              coble
-            </Text>
-            <Text dimColor> v{VERSION}</Text>
+      <Box flexDirection="column" borderStyle="round" borderColor="cyan" paddingX={1} alignSelf="flex-start">
+        <Text>
+          <Text color="cyan">⛵ </Text>
+          <Text bold color="cyan">
+            coble
           </Text>
-          {model ? <Text>{shortModel(model)}</Text> : <Text dimColor>no model · run setup</Text>}
+          <Text dimColor> v{VERSION}</Text>
+        </Text>
+        {model ? (
+          <Text>
+            <Text dimColor>{label("model")}</Text>
+            {shortModel(model)}
+          </Text>
+        ) : (
+          <Text dimColor>no model · run setup</Text>
+        )}
+        <Text>
+          <Text dimColor>{label("cwd")}</Text>
           <Text dimColor>{cwd}</Text>
-          {(notes ?? []).map((n, i) => (
-            <Text key={i} dimColor>
-              {n}
-            </Text>
-          ))}
-        </Box>
+        </Text>
+        {(notes ?? []).map((n, i) => (
+          <Text key={i} dimColor>
+            {n}
+          </Text>
+        ))}
       </Box>
       {tips.map((t, i) => (
         <Text key={i} color={hint ? "yellow" : undefined} dimColor={!hint}>
-          {`   ${t}`}
+          {`  ▸ ${t}`}
         </Text>
       ))}
     </Box>

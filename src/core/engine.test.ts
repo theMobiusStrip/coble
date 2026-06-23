@@ -2,10 +2,22 @@ import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { MemorySaver } from "@langchain/langgraph";
+import type { BaseMessage } from "@langchain/core/messages";
+import type { ChatGenerationChunk } from "@langchain/core/outputs";
 import { DEFAULT_POLICY, policyForMode } from "./approval.js";
 import { runAgent } from "./engine.js";
 import type { AgentEvent } from "./events.js";
 import { ScriptedChatModel } from "./scripted.js";
+
+/** Scripted model that records the messages it sees on each turn. */
+class RecordingModel extends ScriptedChatModel {
+  readonly seen: string[][] = [];
+  override async *_streamResponseChunks(messages: BaseMessage[]): AsyncGenerator<ChatGenerationChunk> {
+    this.seen.push(messages.map((m) => (typeof m.content === "string" ? m.content : JSON.stringify(m.content))));
+    yield* super._streamResponseChunks(messages);
+  }
+}
 
 let cwd: string;
 
@@ -167,5 +179,26 @@ describe("runAgent end-to-end (scripted model)", () => {
       expect(err.usage?.inputTokens).toBe(100); // one scripted turn's usage (100 in / 25 out)
       expect(err.usage?.outputTokens).toBe(25);
     }
+  });
+
+  it("remembers prior turns when a checkpointer + threadId persist across runs", async () => {
+    const model = new RecordingModel([{ content: "first answer" }, { content: "second answer" }]);
+    const checkpointer = new MemorySaver();
+    const threadId = "memory-thread";
+    await collect(runAgent({ prompt: "my name is Ada", cwd, model, policy: DEFAULT_POLICY, checkpointer, threadId }));
+    await collect(runAgent({ prompt: "what is my name?", cwd, model, policy: DEFAULT_POLICY, checkpointer, threadId }));
+    // Turn 2's model invocation must include turn 1's human prompt AND AI answer.
+    const turn2 = (model.seen.at(-1) ?? []).join("\n");
+    expect(turn2).toContain("my name is Ada");
+    expect(turn2).toContain("first answer");
+    expect(turn2).toContain("what is my name?");
+  });
+
+  it("has no cross-thread leakage (a fresh threadId starts empty)", async () => {
+    const model = new RecordingModel([{ content: "a" }, { content: "b" }]);
+    const cp = new MemorySaver();
+    await collect(runAgent({ prompt: "remember X", cwd, model, policy: DEFAULT_POLICY, checkpointer: cp, threadId: "t1" }));
+    await collect(runAgent({ prompt: "second", cwd, model, policy: DEFAULT_POLICY, checkpointer: cp, threadId: "t2" }));
+    expect((model.seen.at(-1) ?? []).join("\n")).not.toContain("remember X"); // different thread → no history
   });
 });
