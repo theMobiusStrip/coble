@@ -13,19 +13,19 @@ npm run pack:dry   # inspect the npm package without publishing
 npm run docker:build
 ```
 
-All state — sessions, checkpoints, audit log, global config — lives under `COBLE_HOME`
-(default `~/.coble`), so isolated runs are one env var away:
+All coble state lives under `COBLE_HOME` (default `~/.coble`), so isolated runs are one env var away:
 
 ```bash
 COBLE_HOME=$(mktemp -d) node dist/cli.js doctor --no-ping
 ```
 
-## Running
+## Headless / CI
+
+`-p` runs one task, streams events, and exits; `scripted:` models run key-free:
 
 ```bash
-coble                                                  # interactive TUI
-coble -p "count the TODOs in src and summarize them"   # one-shot, headless (scripting / CI)
-coble -p -m ollama:llama3.1 "explain this repo"        # fully local — no key, no cloud
+coble -p "count the TODOs in src and summarize them"   # headless
+coble -p -m scripted:fixture.json "..."                # deterministic, no key (CI)
 ```
 
-`-p` runs a single task, streams events, and exits.
+Full flag/provider reference: [README](./README.md).
