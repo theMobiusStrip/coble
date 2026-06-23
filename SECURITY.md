@@ -5,13 +5,11 @@ commands. This document states its trust boundary, threat model, and what each
 protection actually guarantees — including where it does **not**.
 
 One-sentence version: **the classifier decides whether to ask a human; the OS
-sandbox decides what an approved command can actually touch.** The classifier is
-defense-in-depth, never the boundary.
-
-Here "classifier" means a **deterministic** rule that parses the command string
-(`src/core/approval.ts`) — not an LLM that judges intent. It can't be
-prompt-injected, but it also can't reason about what a command is *for*; that is
-exactly why the OS sandbox, not the classifier, is the boundary.
+sandbox decides what an approved command can actually touch** — so the classifier
+is defense-in-depth, never the boundary. It is a **deterministic** parse of the
+command string (`src/core/approval.ts`), not an LLM judging intent: it can't be
+prompt-injected, but it can't reason about what a command is *for* either — which
+is exactly why the OS sandbox, not the classifier, is the boundary.
 
 ## Threat model
 
@@ -52,10 +50,9 @@ Each answers a *different* question; they are complementary, not redundant.
 | **Spotlighting** | "Is this data or instructions?" | untrusted-data envelope (`src/core/prompts.ts`) | No — injection defense-in-depth |
 | **Audit** | "What happened, and why allowed?" | append-only JSONL (`src/core/audit.ts`) — [format & demo](./docs/audit-log.md) | Yes, for *record* |
 
-The sandbox sits **under** the approval gate, not instead of it: `tierExceeds` +
-`interrupt()` still decide whether a command runs; the sandbox confines whatever
-runs, and — unlike any app-level check — binds the command's whole subprocess
-tree.
+The sandbox sits **under** the approval gate, not instead of it: the gate decides
+whether a command runs; the sandbox confines what it touches — and, unlike any
+app-level check, binds the whole subprocess tree.
 
 ## What each mode protects against
 
@@ -104,15 +101,8 @@ Recommended profile for auditing untrusted code:
 
 ## Permission modes & rules
 
-**Modes** (`--permission-mode`, settings `defaultMode`, or Shift+Tab in the TUI):
-
-| Mode | reads | writes | dangerous (shell/push/PR) |
-| --- | --- | --- | --- |
-| `plan` | run | **blocked** | **blocked** (read-only) |
-| `default` | auto | auto | ask human |
-| `careful` | auto | ask human | ask human |
-| `auto` | auto | classifier | classifier (push/PR still ask) |
-| `bypass` | auto | auto | auto |
+**Modes** (`plan`/`default`/`careful`/`auto`/`bypass`) gate reads, writes, and
+dangerous calls at increasing strictness — see the table in [README](./README.md#permission-modes--rules).
 
 **Rules** — `allow` / `ask` / `deny` patterns (`Tool(pattern)`, e.g. `Bash(git push:*)`,
 `Read(./src/**)`) in `settings.yaml`, evaluated **deny → ask → allow**, overriding the mode
@@ -133,33 +123,26 @@ CLI, so a cloned repo cannot self-escalate (mirrors Claude Code).
 
 ### `auto` mode is model-judged, not a boundary
 
-In `auto` mode a separate **classifier LLM** decides whether a would-prompt call runs,
-instead of asking you. It is shown the task, the agent's intent, and — for a write/edit — the
-agent's own proposed payload (capped, fenced as untrusted), but **not** tool results or file
-contents read from disk (so injected output cannot drive it); `git push`/PR and `rm -rf` of
-`/` or `$HOME` still require a human; a block makes the agent replan. It is convenient but **not a
-security boundary** — it is probabilistic and can be wrong. Pair it with `--sandbox` (the
-OS-enforced boundary). The classifier is configurable (`COBLE_AUTO_MODEL` /
-`settings.permissions.autoMode.model`) and adds one model round-trip per gated call.
+A separate **classifier LLM** decides whether a would-prompt call runs instead of asking you.
+It sees the task, the agent's intent, and (for a write/edit) the agent's own proposed payload
+(capped, fenced as untrusted) — but **not** tool results or file contents, so injected output
+can't drive it. `git push`/PR and `rm -rf` of `/` or `$HOME` still require a human; a block
+makes the agent replan. It's probabilistic — pair it with `--sandbox`. Configurable via
+`COBLE_AUTO_MODEL` / `settings.permissions.autoMode.model` (one model round-trip per gated call).
 
 ## Honest limitations (do not overclaim)
 
-- **The classifier is not a boundary.** Allowlist-parsing of shell strings can
-  never fully track shell semantics (`eval`, `xargs`, quoting, locale tricks).
-  Known bypass classes are closed and regression-tested (`approval.test.ts`),
-  but treat the classifier as triage; `--sandbox` is the boundary.
-- **Web tools widen the egress surface.** `web_fetch`/`web_search` add network
-  reach. They are `dangerous`-tier (approved), allowlist-bound under `--sandbox`,
-  GET-only, and block link-local/metadata IPs by resolved address. Residual gaps:
-  hostname allowlisting permits domain-fronting; there is a DNS-rebinding TOCTOU
-  window between the resolve-time IP check and the connect (same hostname-only
-  weakness as the proxy); loopback/private IPs are *allowed* (local-first, and the
-  call is human-approved); IPv6 ULA metadata endpoints are not enumerated. The OS
-  sandbox + approval gate are the boundary — keep the allowlist narrow and review
-  fetched content as untrusted.
-- **Egress is hostname-only.** The proxy allowlists by hostname; a broad entry
-  (e.g. `github.com`) leaves a domain-fronting exfil path. Keep the allowlist
-  narrow.
+- **The classifier is not a boundary.** String-parsing can't fully track shell
+  semantics; known bypass classes are closed and regression-tested
+  (`approval.test.ts`), but treat it as triage — `--sandbox` is the boundary.
+- **Egress is hostname-only, and web tools widen it.** The proxy (and the
+  in-process `web_fetch`/`web_search`, which enforce the same allowlist) match by
+  hostname, so a broad entry (e.g. `github.com`) leaves a domain-fronting exfil
+  path — keep the allowlist narrow. Web tools are `dangerous`-tier, GET-only, and
+  block link-local/metadata IPs by resolved address; residual gaps: DNS-rebinding
+  TOCTOU between the resolve check and the connect, loopback/private IPs *allowed*
+  (local-first, human-approved), IPv6 ULA metadata not enumerated. Review fetched
+  content as untrusted.
 - **Symlink jail is not fully TOCTOU-proof.** `resolveInWorkspace` resolves the
   real path of the deepest existing ancestor (closing the static symlink
   escape), but a link swapped in between check and syscall could still slip

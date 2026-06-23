@@ -6,15 +6,18 @@
 [![license](https://img.shields.io/badge/license-MIT-blue)](./LICENSE)
 [![npm](https://img.shields.io/npm/v/@themobiusstrip/coble)](https://www.npmjs.com/package/@themobiusstrip/coble)
 
-A **local, provider-agnostic agent CLI** built on [LangGraph.js](https://github.com/langchain-ai/langgraphjs) and [Ink](https://github.com/vadimdemedes/ink).
+A **local, provider-agnostic coding-agent CLI for learning agentic security** — a small, readable codebase that makes an AI agent's trust boundary explicit and auditable. Built on [LangGraph.js](https://github.com/langchain-ai/langgraphjs) and [Ink](https://github.com/vadimdemedes/ink).
 
-coble is a small coding agent you run in your own terminal. The point isn't to out-feature Claude Code — it's a focused, readable implementation of the mechanics that make an agent trustworthy to run locally:
+A small coding agent for your terminal: durable SQLite-checkpointed sessions, human-in-the-loop approvals, provider-agnostic (OpenAI · Anthropic · Google · Ollama), and built-in evals. The part worth reading is the trust boundary.
 
-- **🔁 Durable sessions** — every step is checkpointed to SQLite. Kill the process mid-task and `coble resume <id>` continues from the last checkpoint *without re-running completed work*.
-- **🙋 Human-in-the-loop** — dangerous tool calls (arbitrary shell, `git push`, opening a PR) pause the whole graph via LangGraph's `interrupt()` and wait for terminal approval. Approvals survive a crash too.
-- **🛡️ Layered trust boundary** — every tool call is classified `safe` / `confirm` / `dangerous` (read-only shell runs freely, everything else is gated) and written to an append-only audit log. The classifier is defense-in-depth, not the boundary: `--sandbox` adds OS-level isolation (filesystem jail + default-deny network egress, Seatbelt/bubblewrap) that confines what an approved command can actually touch. See [SECURITY.md](./SECURITY.md).
-- **🔌 Provider-agnostic** — one flag switches OpenAI `gpt-5.5`, Anthropic Claude, Google Gemini, or a fully local Ollama model.
-- **🧪 Built-in evals** — 18 fixture-based tasks with outcome assertions, runnable against any model and run deterministically (key-free) in CI.
+## Security principle
+
+> **Assume the model is compromised — then be honest, in code, about the one layer that actually contains it.**
+
+- **The LLM is untrusted** — every tool call is the crossing from untrusted planner to your real machine.
+- **Exactly one real boundary:** `--sandbox` (OS-level filesystem jail + default-deny egress + key scrub). Everything else — classifier, rules, auto-mode, spotlighting — is defense-in-depth, and each says so in the source.
+
+Full threat model, the per-layer "boundary or not?" table, and honest limitations: **[SECURITY.md](./SECURITY.md)**.
 
 ## Quickstart
 
@@ -24,80 +27,58 @@ npm install -g @themobiusstrip/coble
 
 # 2. save a key once — effective from any directory afterwards
 coble config set OPENAI_API_KEY sk-...       # or ANTHROPIC_API_KEY / GOOGLE_API_KEY
-# for Google AI as the default:
-# coble config set GOOGLE_API_KEY ...
-# coble config set COBLE_MODEL google:gemini-3.5-flash
+# default to Google AI:  coble config set COBLE_MODEL google:gemini-3.5-flash
 ```
 
-**Alternative — drive coble through a local Anthropic-compatible endpoint** (e.g. [meridian](https://github.com/rynfar/meridian) bridging a Claude Pro/Max subscription, LiteLLM, or any proxy that speaks the Anthropic API). Point the base URL at it; the key can be any non-empty placeholder when the proxy handles auth:
+No key yet? Just run `coble` — a first-run wizard picks a provider, validates the key with a live request, and saves it globally. Verify with `coble doctor`.
+
+**Local/proxy endpoint** (e.g. [meridian](https://github.com/rynfar/meridian), LiteLLM — anything speaking the Anthropic API): point `ANTHROPIC_BASE_URL` at it (read by the Anthropic SDK, so a shell var or `.env` is enough):
 
 ```bash
 ANTHROPIC_BASE_URL=http://127.0.0.1:3456 ANTHROPIC_API_KEY=x COBLE_MODEL=anthropic:claude-opus-4-8 coble
 ```
 
-`ANTHROPIC_BASE_URL` is read by the underlying Anthropic SDK, so it works straight from the shell (or a `.env`) with no extra coble config.
-
-No key yet? Just run `coble` — the TUI opens a **first-run wizard**: pick a provider, paste the key (input hidden), coble validates it with a live request and saves it globally. Verify any setup with `coble doctor`.
-
 ## Eval results
 
-The tasks run two ways: **scripted** (deterministic, key-free, on every CI push) and against a **real model**. Assertions check task *outcomes* (file contents, branch state, refusals), so they're meaningful across models — the agent reaches them however it likes.
+Assertions check task *outcomes* (file contents, branch state, refusals), so they hold across models. Scripted runs are deterministic and key-free (every CI push); the model column is a recorded baseline.
 
 | Suite | Passed | Cost |
 | --- | --- | --- |
 | scripted (CI) | **18/18** | $0 |
 | `openai:gpt-5.5` | **16/16** | ~$0.20 |
 
-Scripted runs every fixture task on each push. The `gpt-5.5` figures are the 2026-06-11 baseline in [evals/RESULTS.md](./evals/RESULTS.md), recorded over the original 16 tasks; reproduce or refresh with `coble eval -m openai:gpt-5.5 --write`. See [`evals/tasks/`](./evals/tasks) for definitions.
-
-> The first real-model run scored 11/16 — not because gpt-5.5 failed the tasks, but because five assertions over-specified the *path* (which tool to use, exact commit wording) instead of the *outcome*. For example, asked to delete everything, gpt-5.5 refused outright rather than attempting the command and being denied. Tightening those assertions to outcome-based — and leaving mechanism guarantees (denial, approval, audit) to the unit tests — is exactly the eval-iteration loop these harnesses exist to drive.
+`gpt-5.5` is the 2026-06-11 baseline ([evals/RESULTS.md](./evals/RESULTS.md)); refresh with `coble eval -m openai:gpt-5.5 --write`. Task defs: [`evals/tasks/`](./evals/tasks).
 
 ## Configuration
 
-Four ways to configure, by scope:
-
 | Method | Scope | Example |
 | --- | --- | --- |
-| `coble config set KEY <value>` | **global** — every run, any directory (`~/.coble/env`, mode `600`) | `coble config set OPENAI_API_KEY sk-...` |
+| `coble config set KEY <value>` | **global** — every run (`~/.coble/env`, mode `600`) | `coble config set OPENAI_API_KEY sk-...` |
 | shell environment | current shell / profile | `export ANTHROPIC_API_KEY=sk-ant-...` |
 | project `.env` | runs started from that directory | `OPENAI_API_KEY=sk-...` in `./.env` |
-| `-m` flag | single invocation (model choice only) | `coble -p -m ollama:llama3.1 "..."` |
+| `-m` flag | single invocation (model only) | `coble -p -m ollama:llama3.1 "..."` |
 
-**Precedence** (first match wins): `-m` flag → shell env → project `.env` → global config.
+**Precedence** (first wins): `-m` flag → shell env → project `.env` → global config.
 
 Keys coble reads:
 
-- `OPENAI_API_KEY` — [create one](https://platform.openai.com/api-keys)
-- `ANTHROPIC_API_KEY` — [create one](https://console.anthropic.com/settings/keys)
-- `GOOGLE_API_KEY` — [create one](https://aistudio.google.com/app/apikey); free-tier keys have tight per-day request quotas, and an agent task makes several requests, so expect 429s unless billing is enabled
-- `TAVILY_API_KEY` — key for the `web_search` tool ([Tavily](https://tavily.com)); absent ⇒ `web_search` reports it's unconfigured (no crash)
-- `COBLE_MODEL` — default model when `-m` is omitted, e.g. `openai:gpt-5.5` or `google:gemini-3.5-flash`
-- `OLLAMA_HOST` — remote/Docker Ollama endpoint (default `http://localhost:11434`)
-- `COBLE_HOME` — state directory (sessions, checkpoints, audit log, global config; default `~/.coble`)
+- `OPENAI_API_KEY` · `ANTHROPIC_API_KEY` · `GOOGLE_API_KEY` — provider keys ([OpenAI](https://platform.openai.com/api-keys) / [Anthropic](https://console.anthropic.com/settings/keys) / [Google](https://aistudio.google.com/app/apikey); free Google keys 429 quickly).
+- `TAVILY_API_KEY` — key for `web_search` ([Tavily](https://tavily.com)); absent ⇒ the tool reports it's unconfigured (no crash).
+- `COBLE_MODEL` — default model when `-m` is omitted, e.g. `openai:gpt-5.5`.
+- `OLLAMA_HOST` — Ollama endpoint (default `http://localhost:11434`).
+- `COBLE_HOME` — state dir (sessions, checkpoints, audit log, global config; default `~/.coble`).
 
-Inspect with `coble config list` (values masked; `--reveal` to print), `coble config path`, and `coble doctor` — which checks node version, state dir, keys (masked, with their source), default-model resolution, provider connectivity, and git/gh.
-
-**Security**: the global config file is written mode `0600`; command output masks values by default; keys are never written to the audit log or session store.
+Inspect with `coble config list` / `path` and `coble doctor`. Keys are stored mode `0600`, masked in output, and never written to the audit log or session store.
 
 ### Docker
 
 ```bash
 docker build -t coble .
 
-# keep coble state outside the container and run against the current repo;
-# the /data mount also carries your global config (coble config set … on the host)
+# state + global config persist via the /data mount; run against the current repo
 docker run --rm -it \
-  -v "$PWD:/workspace" \
-  -v "$HOME/.coble:/data" \
-  -e OPENAI_API_KEY \
+  -v "$PWD:/workspace" -v "$HOME/.coble:/data" -e OPENAI_API_KEY \
   coble -p -m openai:gpt-5.5 "summarize this repository"
-
-# local model path, assuming Ollama is reachable from the container
-docker run --rm -it \
-  -v "$PWD:/workspace" \
-  -v "$HOME/.coble:/data" \
-  -e OLLAMA_HOST=http://host.docker.internal:11434 \
-  coble -p -m ollama:llama3.1 "count TODOs in src"
 ```
 
 ### Commands
@@ -119,36 +100,26 @@ docker run --rm -it \
 - `-m, --model <provider:name>` — `openai:gpt-5.5`, `anthropic:claude-sonnet-4-6`, `google:gemini-3.5-flash`, `ollama:llama3.1`, or `scripted:file.json`
 - `-C, --cwd <dir>` — workspace root for this run (default: current directory)
 - `-p, --print` — non-interactive: run one task, print events, exit
-- `--permission-mode <mode>` — `plan` (read-only), `default`, `careful`, `auto` (model-judged), or `bypass`. In the TUI, **Shift+Tab** cycles modes. `--paranoid` and `--dangerously-allow` are aliases for `careful` and `bypass`.
-- `--paranoid` — also require approval for workspace writes (alias for `--permission-mode careful`)
-- `--dangerously-allow` — auto-approve dangerous calls (alias for `--permission-mode bypass`)
-- `--sandbox` — confine `bash`/`git` subprocesses in an OS sandbox (filesystem jail + default-deny network egress). Falls back to a warning if the backend is unavailable; recommended for `coble review` over untrusted repos. See [SECURITY.md](./SECURITY.md).
+- `--permission-mode <mode>` — `plan` / `default` / `careful` / `auto` / `bypass` (Shift+Tab cycles in the TUI). `--paranoid` and `--dangerously-allow` alias `careful` and `bypass`.
+- `--sandbox` — confine `bash`/`git` in an OS sandbox (fs jail + default-deny egress); warns and falls back if unavailable. Recommended for `coble review`.
 - `--strict-sandbox` — refuse to run if the sandbox can't engage (implies `--sandbox`)
-- `--allow-domain <host>` — permit a hostname through the egress allowlist under `--sandbox` (repeatable; also `COBLE_ALLOWED_DOMAINS`)
+- `--allow-domain <host>` — permit a host through the egress allowlist under `--sandbox` (repeatable; also `COBLE_ALLOWED_DOMAINS`)
 
 ### Web tools (`web_fetch`, `web_search`)
 
-The agent can reach the network via two `dangerous`-tier tools (so each call is approved, like `bash`):
-
-- `web_fetch <url>` — GET an http(s) URL and return its text. GET-only, redirects re-validated, body capped.
-- `web_search <query>` — search via [Tavily](https://tavily.com); set the key with `coble config set TAVILY_API_KEY <key>` (absent ⇒ the tool says so, no crash).
-
-Both run in coble's main process (not the bash sandbox), so they enforce the boundary themselves: under `--sandbox` the host must be on the egress allowlist (default-deny; add with `--allow-domain`, e.g. `--allow-domain api.tavily.com`), and link-local/cloud-metadata IPs (`169.254.169.254`, …) are refused in every mode. Fetched content is wrapped as untrusted data. See [SECURITY.md](./SECURITY.md).
+The agent can reach the network via two `dangerous`-tier tools (approved like `bash`): `web_fetch <url>` (GET → text, redirects re-validated, body capped) and `web_search <query>` (via [Tavily](https://tavily.com); set `TAVILY_API_KEY`). They run in coble's main process and enforce the egress allowlist themselves — default-deny under `--sandbox` (`--allow-domain` to permit), link-local/metadata IPs always refused, output wrapped as untrusted. See [SECURITY.md](./SECURITY.md).
 
 ### Permission modes & rules
 
 | Mode | Behaviour |
 | --- | --- |
-| `plan` | read-only — writes/commands are blocked; the agent plans without acting |
+| `plan` | read-only — writes/commands blocked; the agent plans without acting |
 | `default` | reads + workspace writes auto-run; dangerous calls ask |
 | `careful` | writes also ask |
-| `auto` | a classifier **model** judges would-prompt calls (push/PR still ask); not a security boundary — pair with `--sandbox` |
+| `auto` | a classifier **model** judges would-prompt calls (push/PR still ask) — not a boundary; pair with `--sandbox` |
 | `bypass` | everything auto-runs |
 
-Pre-approve or block specific commands/paths in `~/.coble/settings.yaml` (global) or
-`<repo>/.coble/settings.yaml` (project). Rules are evaluated **deny → ask → allow** and
-override the mode. A project file may only *tighten* (its `allow`/`defaultMode` are
-ignored) so a cloned repo can't grant itself more access. See [SECURITY.md](./SECURITY.md).
+Pre-approve or block commands/paths in `~/.coble/settings.yaml` (global) or `<repo>/.coble/settings.yaml` (project), evaluated **deny → ask → allow** over the mode. A project file may only *tighten* (its `allow`/`defaultMode` are ignored). Details: [SECURITY.md](./SECURITY.md).
 
 ```yaml
 # ~/.coble/settings.yaml
@@ -163,46 +134,25 @@ permissions:
 
 ### Context (`AGENTS.md`)
 
-coble loads two `AGENTS.md` layers into the agent's system prompt at startup, in order —
-same pattern as Claude reading `CLAUDE.md` and Codex reading `AGENTS.md`:
+coble loads two `AGENTS.md` layers into the system prompt — same pattern as `CLAUDE.md` (Claude) / `AGENTS.md` (Codex):
 
-1. **user-level** — `$COBLE_HOME/AGENTS.md` (`~/.coble/AGENTS.md` by default): your global
-   conventions, applied in every workspace.
-2. **project-level** — `<workspace>/AGENTS.md`: this repo only, appended after the global
-   one so project rules build on (and can override) it.
+1. **user-level** — `$COBLE_HOME/AGENTS.md`: global conventions, every workspace.
+2. **project-level** — `<workspace>/AGENTS.md`: this repo, appended last so it can override the global one.
 
-Use them for conventions and guidance. It is **model guidance, not a hard block**: a
-jailbroken agent can ignore it (like any context file). For deterministic enforcement, use
-permission rules above or `--sandbox`.
+It is model guidance, not a hard block — for enforcement use permission rules or `--sandbox`. `AGENTS.md` is loaded into the *trusted* prompt, so review one before running coble in a cloned repo ([SECURITY.md](./SECURITY.md); `coble review` deliberately ignores the target's).
 
-The user-level file lives in `~/.coble` — outside every workspace and on the sandbox
-deny-read list — so the agent cannot read or overwrite it. The project-level file is in the
-workspace and therefore agent-writable, like `CLAUDE.md`.
-
-> **Trust note:** `AGENTS.md` is loaded into the *trusted* system prompt (not wrapped as
-> untrusted data). Treat it like `CLAUDE.md` — an `AGENTS.md` in a repo you did **not**
-> author becomes trusted instructions, so review one before running coble in a cloned repo.
-> `coble review` is the exception: it audits an untrusted target and deliberately ignores
-> that target's `AGENTS.md`.
-
-To install a security playbook, run `coble policy install` with its rendered policy file
-— it writes the managed block into your `AGENTS.md`, in place and idempotently:
+To install a security playbook, run `coble policy install` with its **rendered** policy file (not the full doc) — it writes a managed block into `AGENTS.md`, in place and idempotently. Human-only:
 
 ```bash
-coble policy install path/to/agentic-security-playbooks/dist/agent-security-policy.md   # user-level (~/.coble/AGENTS.md)
-coble policy install ./agent-security-policy.md --project                               # this repo (<cwd>/AGENTS.md)
-coble policy status      # show both scopes
-coble policy uninstall   # remove the block, keep the rest of the file
+coble policy install path/to/dist/agent-security-policy.md   # user-level (~/.coble/AGENTS.md)
+coble policy install ./agent-security-policy.md --project    # this repo
+coble policy status      # both scopes
+coble policy uninstall   # remove the block, keep the rest
 ```
-
-Run it yourself in a terminal — the command is human-only (it refuses agent-driven
-invocation; best-effort, see [SECURITY.md](./SECURITY.md)). It rejects the full playbook
-doc — pass the *rendered* policy (just the block), not the whole document.
 
 ## How it works — the trust boundary
 
-The interesting part of coble is what happens to a tool call *before* it runs. The
-LLM is untrusted; every call it proposes crosses one decision point:
+Every tool call the (untrusted) LLM proposes crosses one decision point:
 
 ```
    model proposes a tool call   ·   read · write · edit · bash · git/PR · web fetch/search
@@ -225,24 +175,13 @@ LLM is untrusted; every call it proposes crosses one decision point:
    append-only audit log
 ```
 
-Two ideas carry the design. A **deterministic classifier** sorts each command into a
-danger tier (`safe` / `confirm` / `dangerous`) — triage for *whether to ask a human*,
-never the boundary itself. The **OS sandbox** is the boundary: it confines what an
-approved command can reach, however the command is spelled. In between, permission
-**modes** and user `allow` / `ask` / `deny` rules decide what runs unattended, a project
-`.coble/settings.yaml` may only *tighten* (a cloned repo can't grant itself access), and
-untrusted tool output is wrapped in a spotlighting envelope so it can't smuggle
-instructions back to the model. Full threat model and the honest limits of every layer:
-[SECURITY.md](./SECURITY.md).
+The **deterministic classifier** sorts each call into a danger tier — triage for *whether to ask a human*, never the boundary. The **OS sandbox** is the boundary — it confines what an approved command can reach, however it's spelled. Honest limits of every layer: [SECURITY.md](./SECURITY.md).
 
-Underneath, the loop is a small LangGraph `StateGraph` (`agent → tools → agent`)
-checkpointed to SQLite — so `interrupt()` can pause for approval and a killed run resumes
-from its last step. That durability is deliberately boring infrastructure; the boundary
-above is the part worth reading.
+Underneath, the loop is a small LangGraph `StateGraph` checkpointed to SQLite, so `interrupt()` can pause for approval and a killed run resumes from its last step.
 
 ## Development
 
-Build, test, local-isolation, and headless/one-shot usage notes live in [DEVELOP.md](./DEVELOP.md).
+Build, test, and headless/CI usage live in [DEVELOP.md](./DEVELOP.md).
 
 ## License
 
