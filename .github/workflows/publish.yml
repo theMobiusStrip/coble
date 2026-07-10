@@ -17,7 +17,12 @@ jobs:
         with:
           node-version: 22
           registry-url: https://registry.npmjs.org   # required so npm targets the OIDC registry
-      - run: npm install -g npm@latest   # OIDC trusted publishing needs npm >= 11.5.1
-      - run: node -v && npm -v           # diagnostic: confirm npm >= 11.5.1 at publish time
+      # Pin to the 11.x line: OIDC trusted publishing needs npm >= 11.5.1, but
+      # npm >= 12 blocks native install scripts by default (allowScripts), so
+      # better-sqlite3's binding never builds and the prepublishOnly test gate
+      # fails with "Could not locate the bindings file". 11.x satisfies OIDC and
+      # still runs install scripts.
+      - run: npm install -g npm@11
+      - run: node -v && npm -v           # diagnostic: confirm npm 11.x (>= 11.5.1) at publish time
       - run: npm ci
       - run: npm publish                 # prepublishOnly runs the gate
